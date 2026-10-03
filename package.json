@@ -1,0 +1,29 @@
+{
+  "name": "onlymind",
+  "version": "0.1.0",
+  "description": "Send tasks from your phone to Claude Code / Codex running on your computer, execute them, and browse history.",
+  "type": "module",
+  "main": "src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wangdming/OnlyMind.git"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "doctor": "node scripts/doctor.mjs",
+    "check:tunnel": "node scripts/check-tunnel.mjs",
+    "update": "node scripts/update.mjs",
+    "check:update": "node scripts/update.mjs --check",
+    "tunnel": "node scripts/tunnel.mjs",
+    "package": "node scripts/package.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.0.0",
+    "fastify": "^5.0.0"
+  }
+}

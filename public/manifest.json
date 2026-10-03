@@ -1,0 +1,16 @@
+{
+  "name": "OnlyMind",
+  "short_name": "OnlyMind",
+  "description": "Send tasks to Claude Code / Codex on your computer",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='40' fill='%236366f1'/%3E%3Ctext x='96' y='128' font-size='96' text-anchor='middle' fill='white' font-family='sans-serif'%3EOM%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}

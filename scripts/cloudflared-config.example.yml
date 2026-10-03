@@ -1,0 +1,22 @@
+# Cloudflare Tunnel config for OnlyMind.
+# Copy to ~/.cloudflared/config.yml (Windows: %USERPROFILE%\.cloudflared\config.yml)
+# and fill in your tunnel id / credentials / domain / port.
+#
+# Get <TUNNEL_ID> and the credentials file from:
+#   cloudflared tunnel create onlymind
+# Then route your domain:
+#   cloudflared tunnel route dns onlymind onlymind.yourdomain.com
+
+tunnel: <TUNNEL_ID>
+# 用 `cloudflared tunnel create onlymind` 命令输出的那个凭证文件绝对路径填下行
+# (通常在用户主目录的 .cloudflared 文件夹内,名为 <TUNNEL_ID>.json)
+credentials-file: <此处填 cloudflared 输出的凭证文件绝对路径>/<TUNNEL_ID>.json
+
+# China tip: force http2 so the tunnel doesn't rely on QUIC/UDP (often blocked).
+protocol: http2
+
+ingress:
+  - hostname: onlymind.yourdomain.com
+    service: http://localhost:8787      # must match ONLYMIND_PORT
+  # Everything else returns 404.
+  - service: http_status:404

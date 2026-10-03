@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>OnlyMind</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>OnlyMind</h1>
+    <button id="settingsBtn" class="icon-btn" title="设置">⚙︎</button>
+  </header>
+
+  <!-- Settings / token -->
+  <section id="settings" class="card hidden">
+    <label>访问令牌 (Token)
+      <input id="token" type="password" placeholder="粘贴电脑启动时打印的 token" autocomplete="off" />
+    </label>
+    <button id="saveToken">保存</button>
+    <p id="connStatus" class="muted"></p>
+  </section>
+
+  <!-- New task -->
+  <section class="card">
+    <label>任务内容
+      <textarea id="prompt" rows="4" placeholder="例如:在 ~/projects/foo 里把 README 翻译成英文"></textarea>
+    </label>
+    <div class="row">
+      <label class="grow">引擎
+        <select id="engine"></select>
+      </label>
+    </div>
+    <label>工作目录(可选)
+      <input id="cwd" type="text" placeholder="默认用服务端 HOME,例如 /Users/you/projects/foo" />
+    </label>
+    <label class="checkbox">
+      <input id="concise" type="checkbox" checked />
+      <span>简洁回答(默认开启;只给最终结果,不要长篇解释)</span>
+    </label>
+    <label class="checkbox">
+      <input id="stream" type="checkbox" />
+      <span>实时流式输出(默认关闭;开启后可边跑边看)</span>
+    </label>
+    <button id="submit" class="primary">发送任务</button>
+    <p id="submitMsg" class="muted"></p>
+  </section>
+
+  <!-- History -->
+  <section>
+    <h2>历史任务</h2>
+    <div id="list"></div>
+    <button id="loadMore" class="hidden">加载更多</button>
+    <p id="listMsg" class="muted"></p>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+:root {
+  --bg: #0b1020;
+  --card: #151b2e;
+  --fg: #e5e7eb;
+  --muted: #8b93a7;
+  --accent: #6366f1;
+  --ok: #22c55e;
+  --run: #eab308;
+  --fail: #ef4444;
+  --queued: #64748b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  max-width: 720px;
+  margin-inline: auto;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px;
+}
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 16px; margin: 20px 16px 8px; }
+.card {
+  background: var(--card);
+  margin: 12px 16px;
+  padding: 16px;
+  border-radius: 14px;
+}
+label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+input, textarea, select {
+  width: 100%; margin-top: 6px; padding: 10px 12px;
+  background: #0e1424; color: var(--fg);
+  border: 1px solid #263150; border-radius: 10px;
+  font-size: 15px; font-family: inherit;
+}
+textarea { resize: vertical; }
+button {
+  padding: 11px 16px; border: none; border-radius: 10px;
+  background: #263150; color: var(--fg); font-size: 15px; cursor: pointer;
+}
+button.primary { background: var(--accent); color: #fff; width: 100%; }
+button.icon-btn { background: none; font-size: 20px; padding: 4px 8px; }
+.row { display: flex; gap: 12px; }
+.grow { flex: 1; }
+.muted { color: var(--muted); font-size: 13px; }
+.hidden { display: none !important; }
+
+.task {
+  background: var(--card); margin: 8px 16px; border-radius: 12px;
+  padding: 12px 14px; cursor: pointer;
+}
+.task .top { display: flex; align-items: center; gap: 8px; }
+.task .badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: .3px; color: #0b1020; font-weight: 600;
+}
+.badge.queued { background: var(--queued); color: #fff; }
+.badge.running { background: var(--run); }
+.badge.done { background: var(--ok); }
+.badge.failed { background: var(--fail); color: #fff; }
+.badge.canceled { background: #475569; color: #fff; }
+.header { cursor: pointer; }
+.task .engine { font-size: 11px; color: var(--muted); margin-left: auto; }
+.task .prompt { margin: 6px 0 0; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+.task .time { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.task .output {
+  margin-top: 10px; padding: 10px; background: #0a0f1d; border-radius: 8px;
+  font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+  white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto;
+}
+.task .output.err { color: #fca5a5; }
+.task .actions { display: flex; gap: 8px; margin-top: 10px; }
+.task .actions button { font-size: 13px; padding: 7px 12px; }
+.task .actions .cancel { background: #3b2130; color: #fca5a5; }
+.task .actions .rerun { background: #1f2b1f; color: #86efac; }
+
+label.checkbox {
+  display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 14px;
+}
+label.checkbox input { width: auto; margin: 0; }
+.live-dot { color: var(--run); font-size: 11px; margin-left: 6px; }

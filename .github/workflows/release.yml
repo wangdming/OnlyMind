@@ -1,0 +1,33 @@
+name: Release
+
+# 发布新版本的方法:
+#   1) 在 package.json 把 version 改成新版本号(如 0.2.0)并提交;
+#   2) 打同名 tag 并推送:  git tag v0.2.0 && git push origin v0.2.0
+#   本工作流会自动打包并创建带 zip 附件的 GitHub Release。
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # 创建 Release 需要写权限
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 生成交付包
+        run: npm run package
+
+      - name: 创建 Release 并上传 zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: onlymind-*.zip
+          generate_release_notes: true
