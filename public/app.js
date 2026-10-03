@@ -177,6 +177,19 @@ async function rerunTask(id) {
 }
 
 // ---- Data flow ------------------------------------------------------------
+async function loadVersion() {
+  try {
+    const v = await api('/api/version');
+    if (v.updateAvailable) {
+      $('footer').innerHTML =
+        `OnlyMind v${escapeHtml(v.current)}` +
+        `<br><span class="update">有新版本 v${escapeHtml(v.latest)} · 在电脑上运行 npm run update 更新</span>`;
+    } else {
+      $('footer').textContent = `OnlyMind v${v.current}`;
+    }
+  } catch { /* 忽略,不影响使用 */ }
+}
+
 async function loadEngines() {
   try {
     const { engines } = await api('/api/engines');
@@ -289,6 +302,7 @@ async function init() {
     await api('/api/health');
     $('connStatus').textContent = '已连接 ✓';
     await loadEngines();
+    loadVersion();
     await loadMore(true);
   } catch (e) {
     $('settings').classList.remove('hidden');

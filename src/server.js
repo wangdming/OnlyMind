@@ -16,7 +16,15 @@ import { taskBus } from './events.js';
  * @param {string} [deps.publicDir]  if set, serves the web client
  * @param {()=>number} [deps.now]
  */
-export function buildServer({ db, queue, token, publicDir, version = '0.0.0', now = () => Date.now() }) {
+// Compare "a.b.c" version strings. Returns >0 if a newer than b.
+function cmpVer(a, b) {
+  const pa = String(a).replace(/^v/, '').split('.').map(Number);
+  const pb = String(b).replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0); }
+  return 0;
+}
+
+export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, now = () => Date.now() }) {
   const app = Fastify({ logger: false });
 
   // --- Auth: every /api route requires a valid token ----------------------
@@ -37,7 +45,34 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', no
   // --- Routes -------------------------------------------------------------
   app.get('/api/health', async () => ({ ok: true, queued: queue.size }));
 
-  app.get('/api/version', async () => ({ version }));
+  // Current version + (cached) latest GitHub release, so the phone can show an
+  // "update available" hint. The computer fetches GitHub (cached 6h); the phone
+  // only reads the result. Failures degrade gracefully to latest=null.
+  let latestCache = { value: null, at: 0 };
+  const LATEST_TTL = 6 * 60 * 60 * 1000;
+  async function getLatest() {
+    if (!repoSlug) return null;
+    if (latestCache.at && now() - latestCache.at < LATEST_TTL) return latestCache.value;
+    let value = null;
+    try {
+      const res = await fetch(`https://api.github.com/repos/${repoSlug}/releases/latest`, {
+        headers: { 'User-Agent': 'OnlyMind', Accept: 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) value = ((await res.json()).tag_name || '').replace(/^v/, '') || null;
+    } catch { /* offline / rate-limited: keep null */ }
+    latestCache = { value, at: now() };
+    return value;
+  }
+
+  app.get('/api/version', async () => {
+    const latest = await getLatest();
+    return {
+      current: version,
+      latest: latest || null,
+      updateAvailable: !!latest && cmpVer(latest, version) > 0,
+    };
+  });
 
   app.get('/api/engines', async () => ({ engines: engineList() }));
 

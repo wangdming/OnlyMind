@@ -84,3 +84,10 @@ label.checkbox {
 }
 label.checkbox input { width: auto; margin: 0; }
 .live-dot { color: var(--run); font-size: 11px; margin-left: 6px; }
+
+footer {
+  text-align: center; font-size: 12px; padding: 20px 16px 28px; line-height: 1.6;
+}
+footer .update {
+  display: inline-block; margin-top: 4px; color: var(--run); font-weight: 600;
+}

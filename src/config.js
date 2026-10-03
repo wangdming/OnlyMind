@@ -8,7 +8,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
 
 let version = '0.0.0';
-try { version = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version; } catch { /* ignore */ }
+let repoSlug = null; // "owner/repo", used to check GitHub for newer releases
+try {
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  version = pkg.version || version;
+  const url = (pkg.repository && (pkg.repository.url || pkg.repository)) || '';
+  const m = String(url).match(/github\.com[:/]+([^/]+)\/([^/.]+)/i);
+  if (m) repoSlug = `${m[1]}/${m[2]}`;
+} catch { /* ignore */ }
 
 function envInt(name, fallback) {
   const raw = process.env[name];
@@ -28,6 +35,7 @@ if (!token) {
 
 export const config = {
   version,
+  repoSlug,
   projectRoot,
   host: process.env.ONLYMIND_HOST || '0.0.0.0',
   port: envInt('ONLYMIND_PORT', 8787),

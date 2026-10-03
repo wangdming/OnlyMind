@@ -20,7 +20,7 @@ async function main() {
   const db = openDb(config.dbPath);
   const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs });
   const queue = createQueue({ db, run });
-  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version });
+  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug });
 
   await app.listen({ host: config.host, port: config.port });
 

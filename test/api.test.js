@@ -245,6 +245,16 @@ test('rerun copies a task into a new queued task', async () => {
   assert.equal(body.status, 'queued');
 });
 
+test('GET /api/version returns current and no update when repoSlug unset', async () => {
+  const { app } = makeApp(); // no repoSlug -> no GitHub call
+  const res = await app.inject({ method: 'GET', url: '/api/version', headers: auth() });
+  assert.equal(res.statusCode, 200);
+  const b = res.json();
+  assert.equal(b.current, '0.0.0');
+  assert.equal(b.latest, null);
+  assert.equal(b.updateAvailable, false);
+});
+
 test('concise defaults ON and can be disabled', async () => {
   const { app } = makeApp();
   const def = await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'x' } });
