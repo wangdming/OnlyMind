@@ -8,6 +8,35 @@
 
 > **跨平台**:macOS 与 Windows 均支持(Linux 亦可)。需 Node ≥ 22。Windows 上 `claude`/`codex` 的 `.cmd` 启动已自动适配,prompt 经 stdin 投递(无 shell 注入面)。
 
+仓库地址:**https://github.com/wangdming/OnlyMind**
+
+## 下载 · 安装 · 更新
+
+**获取(客户,二选一):**
+```bash
+# 方式一:git 克隆(之后 npm run update 走 git pull)
+git clone https://github.com/wangdming/OnlyMind.git
+
+# 方式二:下载最新 Release 压缩包(无需 git)
+# 打开 https://github.com/wangdming/OnlyMind/releases/latest 下载 onlymind-<版本>.zip 并解压
+```
+然后按平台安装手册操作(见下)。
+
+**更新(客户):**
+```bash
+npm run check:update   # 只检查有没有新版本
+npm run update         # 更新到最新(git 克隆→git pull;zip 下载→自动拉取最新 Release)
+```
+更新会**保留** `data/`(历史任务)与 `.env`(你的配置),完成后重启 OnlyMind 生效。
+
+**发布新版本(维护者,替代手动打包发送):**
+```bash
+# 1) 修改 package.json 的 version(如 0.2.0)并提交推送
+# 2) 打同名 tag 并推送:
+git tag v0.2.0 && git push origin v0.2.0
+# GitHub Actions 自动打包并发布带 zip 的 Release;客户 npm run update 即可拿到。
+```
+
 ## 快速开始
 
 解压后进入**项目根目录**,然后:
@@ -27,7 +56,8 @@ npm start          # 终端会打印访问地址(含 LAN 地址)和 ACCESS TOKEN
 
 > 所有文档与脚本均使用**相对路径**:解压到任意目录即可用。
 >
-> **交付方式**:维护者运行 `npm run package` 生成 `onlymind-<版本>.zip`(自动排除 `node_modules/data/.env/*.db`)→ 把 zip 发给客户 → 客户解压到空文件夹 → 用自己的大模型按「安装手册」自动安装 → 按「使用手册」使用。详见 [说明书 · 打包交付](./docs/04-manual.md)。
+> **交付方式(推荐:GitHub)**:维护者打 tag(`git tag vX.Y.Z && git push --tags`)→ GitHub Actions 自动发布带 zip 的 Release;客户从 Releases 下载或 `git clone`,日后用 `npm run update` 一键更新,无需你每次手动打包发送。
+> **离线交付(备选)**:无网络/不便用 GitHub 时,维护者 `npm run package` 生成 zip 直接发给客户。详见 [说明书 · 打包交付](./docs/04-manual.md)。
 
 ## 特性
 

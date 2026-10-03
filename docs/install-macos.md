@@ -22,6 +22,15 @@
 - 每步都给了「验证」命令;**验证不通过不要进入下一步**。
 - 标注「🧑 需人工」的步骤涉及登录/密码/账号,自动化无法完成,需提示用户手动做。
 
+## 获取项目(二选一)
+
+- **git 克隆(推荐,方便更新)**:
+  ```bash
+  git clone https://github.com/wangdming/OnlyMind.git
+  cd OnlyMind
+  ```
+- **下载压缩包**:打开 https://github.com/wangdming/OnlyMind/releases/latest,下载 `onlymind-<版本>.zip`,解压后 `cd` 进入该文件夹。
+
 ## 第 0 步:确认在项目根目录
 
 ```bash

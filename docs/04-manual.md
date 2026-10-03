@@ -10,7 +10,21 @@
 - [Windows 安装手册](./install-windows.md) —— 同上(PowerShell / winget)。
 - [Windows 使用手册](./usage-windows.md) —— 电脑端 + 手机端 日常使用流程。
 
-## 打包交付(给维护者 / 交付方)
+## 发布与交付(给维护者 / 交付方)
+
+**推荐:GitHub 自动发布**(仓库 https://github.com/wangdming/OnlyMind)。有新功能/修复后:
+```bash
+# 1) 修改 package.json 的 version(如 0.2.0),提交并推送
+# 2) 打同名 tag 并推送:
+git tag v0.2.0 && git push origin v0.2.0
+```
+GitHub Actions(`.github/workflows/release.yml`)会自动打包并发布带 `onlymind-<版本>.zip` 的 Release。客户用 `npm run update` 即可拿到,**无需你手动打包发送**。
+
+**客户更新**:`npm run check:update`(查)/ `npm run update`(更新;保留 `data/` 与 `.env`)。
+
+---
+
+### 离线打包(备选:无网络 / 不用 GitHub 时)
 
 把本项目打成压缩包交给客户,用内置脚本即可(macOS / Windows 通用):
 

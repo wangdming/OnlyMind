@@ -24,6 +24,15 @@
 - 标注「🧑 需人工」的步骤涉及登录/账号/UAC 提权,自动化无法完成,需提示用户手动做。
 - 适用 Windows 10 / 11(64 位);ARM 版选对应架构包即可。
 
+## 获取项目(二选一)
+
+- **git 克隆(推荐,方便更新)**:
+  ```powershell
+  git clone https://github.com/wangdming/OnlyMind.git
+  cd OnlyMind
+  ```
+- **下载压缩包**:打开 https://github.com/wangdming/OnlyMind/releases/latest,下载 `onlymind-<版本>.zip`,解压后 `cd` 进入该文件夹。
+
 ## 第 0 步:确认在项目根目录 + 允许运行脚本
 
 ```powershell

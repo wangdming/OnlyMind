@@ -61,6 +61,14 @@ https://xxxx-xxxx-xxxx.trycloudflare.com
 - **再用**:重开后网址会变,手机打开新网址即可。
 - 若已装开机自启(安装手册第 8 步),终端 A 可省略(服务已常驻),只需开隧道。
 
+## 更新到新版本
+
+```bash
+npm run check:update   # 看有没有新版本
+npm run update         # 更新(git 克隆→git pull;zip 下载→自动拉最新 Release)
+```
+更新**保留** `data/`(历史任务)与 `.env`(配置)。更新后请重启正在运行的 OnlyMind。
+
 ## 安全要点(临时隧道)
 
 - 临时隧道**没有登录保护,唯一防线是令牌**:务必用强令牌,**网址别发到群/截图等公开场合**。
