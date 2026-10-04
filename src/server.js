@@ -1,9 +1,13 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { randomUUID } from 'node:crypto';
-import { insertTask, getTask, listTasks, setSetting } from './db.js';
+import {
+  insertTask, getTask, listTasks, setSetting,
+  createSession, getSession, listSessions, renameSession, deleteSession, touchSession,
+  sessionHistory, setSessionSummary,
+} from './db.js';
 import { isValidEngine, engineList, ENGINES } from './engines.js';
-import { validateKey } from './providers.js';
+import { validateKey, complete } from './providers.js';
 import { taskBus } from './events.js';
 
 /**
@@ -25,7 +29,7 @@ function cmpVer(a, b) {
   return 0;
 }
 
-export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, getApiKey = () => null, now = () => Date.now() }) {
+export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, getApiKey = () => null, models = {}, now = () => Date.now() }) {
   const app = Fastify({ logger: false });
 
   // --- Auth: every /api route requires a valid token ----------------------
@@ -105,16 +109,94 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     // Concise defaults to ON unless explicitly disabled.
     const concise = body.concise !== false && body.concise !== 0 && body.concise !== '0';
 
+    const sessionId = typeof body.session_id === 'string' && body.session_id ? body.session_id : null;
+
     if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
     if (!isValidEngine(engine)) return reply.code(400).send({ error: `unknown engine: ${engine}` });
     const eng = ENGINES[engine];
     if (eng.kind === 'api' && !getApiKey(eng.provider)) {
       return reply.code(400).send({ error: `引擎 ${engine} 需要先设置 ${eng.provider} API Key` });
     }
+    if (sessionId) {
+      const s = getSession(db, sessionId);
+      if (!s) return reply.code(404).send({ error: 'session not found' });
+      if (s.engine !== engine) return reply.code(400).send({ error: `会话绑定引擎 ${s.engine},与任务引擎 ${engine} 不一致` });
+    }
 
-    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd, stream, concise, created_at: now() });
+    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd, stream, concise, session_id: sessionId, created_at: now() });
+    if (sessionId) touchSession(db, sessionId, now());
     queue.enqueue(task.id);
     return reply.code(201).send(task);
+  });
+
+  // --- Sessions -----------------------------------------------------------
+  app.get('/api/sessions', async (req) => {
+    const engine = req.query?.engine;
+    return { sessions: listSessions(db, engine ? { engine } : {}) };
+  });
+
+  app.post('/api/sessions', async (req, reply) => {
+    const body = req.body || {};
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : '';
+    const engine = body.engine;
+    if (!name) return reply.code(400).send({ error: 'name is required' });
+    if (!isValidEngine(engine)) return reply.code(400).send({ error: `unknown engine: ${engine}` });
+    const s = createSession(db, { id: randomUUID(), name, engine, now: now() });
+    return reply.code(201).send(s);
+  });
+
+  app.get('/api/sessions/:id', async (req, reply) => {
+    const s = getSession(db, req.params.id);
+    if (!s) return reply.code(404).send({ error: 'not found' });
+    return s;
+  });
+
+  app.patch('/api/sessions/:id', async (req, reply) => {
+    const s = getSession(db, req.params.id);
+    if (!s) return reply.code(404).send({ error: 'not found' });
+    const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : '';
+    if (!name) return reply.code(400).send({ error: 'name is required' });
+    return renameSession(db, req.params.id, name, now());
+  });
+
+  app.delete('/api/sessions/:id', async (req, reply) => {
+    const s = getSession(db, req.params.id);
+    if (!s) return reply.code(404).send({ error: 'not found' });
+    const removed = deleteSession(db, req.params.id);
+    return { ok: true, removedTasks: removed };
+  });
+
+  app.get('/api/sessions/:id/tasks', async (req, reply) => {
+    const s = getSession(db, req.params.id);
+    if (!s) return reply.code(404).send({ error: 'not found' });
+    const { cursor, limit } = req.query || {};
+    return listTasks(db, { cursor, limit, sessionId: req.params.id });
+  });
+
+  // Compress a session's history into a summary (saves context/tokens).
+  // Supported for API engines (openai/anthropic); claude manages its own context.
+  app.post('/api/sessions/:id/compress', async (req, reply) => {
+    const s = getSession(db, req.params.id);
+    if (!s) return reply.code(404).send({ error: 'not found' });
+    const eng = ENGINES[s.engine];
+    if (!eng || eng.kind !== 'api') {
+      return reply.code(400).send({ error: '当前仅 API 引擎(OpenAI/Anthropic)支持压缩;CLI 引擎自行维护上下文' });
+    }
+    const key = getApiKey(eng.provider);
+    if (!key) return reply.code(400).send({ error: `需要先设置 ${eng.provider} API Key` });
+    const all = sessionHistory(db, s.id);
+    if (all.length === 0) return reply.code(400).send({ error: '该会话暂无可压缩的历史' });
+
+    const transcript = all.map((t) => `【我】${t.prompt}\n【你】${t.output ?? ''}`).join('\n\n');
+    const base = s.summary ? `已有摘要:\n${s.summary}\n\n新的对话:\n` : '';
+    const prompt = `请把下面的多轮对话压缩成简洁的中文要点摘要,保留关键事实、结论、决定与未决问题,供后续对话作为上下文。只输出摘要正文,不要多余说明。\n\n${base}${transcript}`;
+    const model = eng.provider === 'openai' ? models.openai : models.anthropic;
+    const result = await complete(eng.provider, { prompt, key, concise: false, stream: false, model, maxTokens: models.anthropicMaxTokens });
+    if (result.status !== 'done' || !result.output) {
+      return reply.code(502).send({ error: result.error || '压缩失败' });
+    }
+    const updated = setSessionSummary(db, s.id, result.output, all.length, now());
+    return { ok: true, summary: updated.summary, turns_before_summary: updated.turns_before_summary };
   });
 
   // Cancel a queued or running task.

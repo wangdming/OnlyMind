@@ -32,6 +32,7 @@ GitHub Actions(`.github/workflows/release.yml`)会自动打包并发布带 `only
 npm run package
 ```
 
+- 打包前会**自动把 4 份说明书同步到 `user-guide/`**(`scripts/sync-user-guide.mjs`),客户解压后可在顶层 `user-guide/` 直接找到说明书。
 - 产物:项目根目录下的 **`onlymind-<版本号>.zip`**(版本号取自 `package.json`,如 `onlymind-0.1.0.zip`)。
 - **自动排除**:`node_modules`、`data`、`.git`、`.env`、`*.db` 及旧的 zip —— 不含依赖、不含你本机的数据与密钥,体积小、可安全外发。
 - 跨平台:macOS/Linux 用 `zip`,Windows 用 `Compress-Archive`,命令一致。

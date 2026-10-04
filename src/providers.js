@@ -7,6 +7,24 @@ const OPENAI_BASE = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const ANTHROPIC_BASE = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
 const ANTHROPIC_VERSION = '2023-06-01';
 
+/**
+ * Assemble conversation context for an API call (pure, testable).
+ * @param {{concise?:boolean, summary?:string|null, history?:Array<{prompt,output}>}} o
+ * @returns {{systemText:string|null, priorMessages:Array<{role,content}>}}
+ */
+export function assembleContext({ concise, summary, history } = {}) {
+  const sysParts = [];
+  if (concise) sysParts.push(CONCISE_INSTRUCTION);
+  if (summary) sysParts.push('以下是此前对话的摘要,供参考:\n' + summary);
+  const systemText = sysParts.join('\n\n') || null;
+  const priorMessages = [];
+  for (const turn of history || []) {
+    if (turn.prompt) priorMessages.push({ role: 'user', content: turn.prompt });
+    if (turn.output) priorMessages.push({ role: 'assistant', content: turn.output });
+  }
+  return { systemText, priorMessages };
+}
+
 /** Validate an API key by hitting the provider's models endpoint. */
 export async function validateKey(provider, key) {
   if (!key) return { ok: false, error: 'API Key 为空' };
@@ -62,13 +80,14 @@ async function readSSE(res, onData, pickDelta, signal) {
  * Run a completion. Never throws — returns the queue's result shape.
  * @returns {Promise<{status:'done'|'failed'|'canceled', output, error, exitCode:null}>}
  */
-export async function complete(provider, { prompt, key, concise, stream, model, maxTokens, onData, signal }) {
+export async function complete(provider, { prompt, key, concise, stream, model, maxTokens, onData, signal, summary, history }) {
   if (!key) return { status: 'failed', output: null, error: `未设置 ${provider} API Key`, exitCode: null };
-  const sys = concise ? CONCISE_INSTRUCTION : null;
+  const { systemText, priorMessages } = assembleContext({ concise, summary, history });
   try {
     if (provider === 'openai') {
       const messages = [];
-      if (sys) messages.push({ role: 'system', content: sys });
+      if (systemText) messages.push({ role: 'system', content: systemText });
+      messages.push(...priorMessages);
       messages.push({ role: 'user', content: prompt });
       const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
         method: 'POST',
@@ -88,10 +107,10 @@ export async function complete(provider, { prompt, key, concise, stream, model, 
     if (provider === 'anthropic') {
       const body = {
         model, max_tokens: maxTokens || 4096,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [...priorMessages, { role: 'user', content: prompt }],
         stream: !!stream,
       };
-      if (sys) body.system = sys;
+      if (systemText) body.system = systemText;
       const res = await fetch(`${ANTHROPIC_BASE}/messages`, {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION, 'Content-Type': 'application/json' },

@@ -73,6 +73,24 @@
 
 ---
 
+## 会话(Sessions)
+
+把任务组织成会话以支持**多轮续接**(按引擎区分)。
+
+- `GET  /api/sessions?engine=` 列出会话(按 `updated_at` 倒序,可按引擎过滤)。
+- `POST /api/sessions {name, engine}` 新建 → 201 返回会话对象。
+- `GET  /api/sessions/:id` 单查(含 `summary`)。
+- `PATCH /api/sessions/:id {name}` 重命名。
+- `DELETE /api/sessions/:id` 删除(**级联删除**其任务)→ `{ ok, removedTasks }`。
+- `GET  /api/sessions/:id/tasks?cursor=&limit=` 会话内任务分页。
+- `POST /api/sessions/:id/compress` 压缩历史为摘要(**仅 API 引擎**;claude/codex 返回 400)→ `{ ok, summary, turns_before_summary }`。
+
+**续接行为**:给 `POST /api/tasks` 传 `session_id` 即归属会话;执行时——API 引擎带「摘要 + 历史轮次」一起请求;Claude 用同一 `--session-id`(首轮建、后续 `--resume`);其它 CLI 把历史以文字前置到 prompt。
+
+会话对象:`{ id, name, engine, summary, turns_before_summary, created_at, updated_at }`。
+
+---
+
 ## POST /api/tasks
 
 提交一个任务,立即入队并返回(异步执行)。
@@ -84,6 +102,7 @@
 | `engine` | string | 否 | `claude`(默认)/ `codex` / `openai` / `anthropic`。API 引擎需先配置对应 Key,否则返回 400 |
 | `cwd` | string | 否 | 工作目录;省略则用服务端默认(仅 CLI 引擎有效) |
 | `stream` | boolean | 否 | 是否流式(默认 `false`)。为 `true` 时引擎以 stream-json 运行,可通过 SSE 实时查看 |
+| `session_id` | string | 否 | 归属的会话 id;会校验会话存在且引擎一致,并启用多轮续接 |
 
 ```json
 { "prompt": "总结该目录下的 README", "engine": "claude", "cwd": "~/code/foo", "stream": false }

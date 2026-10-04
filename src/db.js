@@ -24,6 +24,17 @@ CREATE TABLE IF NOT EXISTS settings (
   name  TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id                   TEXT PRIMARY KEY,   -- uuid; also used as claude --session-id
+  name                 TEXT NOT NULL,
+  engine               TEXT NOT NULL,      -- claude | codex | openai | anthropic
+  summary              TEXT,               -- compressed history summary (API)
+  turns_before_summary INTEGER NOT NULL DEFAULT 0,
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
 `;
 
 // Lightweight migrations for databases created by an earlier version.
@@ -34,6 +45,9 @@ function migrate(db) {
   }
   if (!cols.includes('concise')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN concise INTEGER NOT NULL DEFAULT 1`);
+  }
+  if (!cols.includes('session_id')) {
+    db.exec(`ALTER TABLE tasks ADD COLUMN session_id TEXT`);
   }
 }
 
@@ -54,11 +68,11 @@ export function openDb(dbPath) {
 
 export function insertTask(db, task) {
   db.prepare(
-    `INSERT INTO tasks (id, prompt, engine, cwd, stream, concise, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`
+    `INSERT INTO tasks (id, prompt, engine, cwd, stream, concise, session_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
   ).run(
     task.id, task.prompt, task.engine, task.cwd ?? null,
-    task.stream ? 1 : 0, task.concise ? 1 : 0, task.created_at
+    task.stream ? 1 : 0, task.concise ? 1 : 0, task.session_id ?? null, task.created_at
   );
   return getTask(db, task.id);
 }
@@ -105,20 +119,16 @@ const LIST_COLS =
  * cursor = created_at of the last item from the previous page (exclusive).
  * Rows omit output/error to keep the payload light.
  */
-export function listTasks(db, { cursor, limit = 20 } = {}) {
+export function listTasks(db, { cursor, limit = 20, sessionId } = {}) {
   const lim = Math.min(Math.max(Number(limit) || 20, 1), 100);
-  let rows;
-  if (cursor) {
-    rows = db
-      .prepare(
-        `SELECT ${LIST_COLS} FROM tasks WHERE created_at < ? ORDER BY created_at DESC LIMIT ?`
-      )
-      .all(Number(cursor), lim + 1);
-  } else {
-    rows = db
-      .prepare(`SELECT ${LIST_COLS} FROM tasks ORDER BY created_at DESC LIMIT ?`)
-      .all(lim + 1);
-  }
+  const where = [];
+  const params = [];
+  if (sessionId) { where.push('session_id = ?'); params.push(sessionId); }
+  if (cursor) { where.push('created_at < ?'); params.push(Number(cursor)); }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const rows = db
+    .prepare(`SELECT ${LIST_COLS} FROM tasks ${clause} ORDER BY created_at DESC LIMIT ?`)
+    .all(...params, lim + 1);
   const hasMore = rows.length > lim;
   const items = rows.slice(0, lim);
   const nextCursor = hasMore ? items[items.length - 1].created_at : null;
@@ -147,4 +157,48 @@ export function failOrphans(db, finishedAt) {
     });
   }
   return orphans.length;
+}
+
+// --- sessions --------------------------------------------------------------
+export function createSession(db, { id, name, engine, now }) {
+  db.prepare(
+    `INSERT INTO sessions (id, name, engine, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(id, name, engine, now, now);
+  return getSession(db, id);
+}
+export function getSession(db, id) {
+  return db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) ?? null;
+}
+export function listSessions(db, { engine } = {}) {
+  if (engine) {
+    return db.prepare('SELECT * FROM sessions WHERE engine = ? ORDER BY updated_at DESC').all(engine);
+  }
+  return db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC').all();
+}
+export function renameSession(db, id, name, now) {
+  db.prepare('UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?').run(name, now, id);
+  return getSession(db, id);
+}
+export function touchSession(db, id, now) {
+  db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, id);
+}
+export function setSessionSummary(db, id, summary, turnsBeforeSummary, now) {
+  db.prepare('UPDATE sessions SET summary = ?, turns_before_summary = ?, updated_at = ? WHERE id = ?')
+    .run(summary, turnsBeforeSummary, now, id);
+  return getSession(db, id);
+}
+/** Delete a session and all its tasks. Returns number of tasks removed. */
+export function deleteSession(db, id) {
+  const n = db.prepare('SELECT COUNT(*) c FROM tasks WHERE session_id = ?').get(id).c;
+  db.prepare('DELETE FROM tasks WHERE session_id = ?').run(id);
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  return n;
+}
+/** Finished tasks in a session, oldest first (for building conversation history). */
+export function sessionHistory(db, id) {
+  return db.prepare(
+    `SELECT prompt, output, status FROM tasks
+     WHERE session_id = ? AND status = 'done'
+     ORDER BY created_at ASC`
+  ).all(id);
 }

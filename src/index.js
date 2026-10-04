@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { openDb, getSetting } from './db.js';
+import { openDb, getSetting, getSession, sessionHistory } from './db.js';
 import { createQueue } from './queue.js';
 import { spawnRunner } from './runner.js';
 import { buildServer } from './server.js';
@@ -23,9 +23,17 @@ async function main() {
   const getApiKey = (provider) => getSetting(db, `${provider}_api_key`) || envKey[provider] || null;
   const models = { openai: config.openaiModel, anthropic: config.anthropicModel, anthropicMaxTokens: config.anthropicMaxTokens };
 
-  const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs, getApiKey, models });
+  // Session continuity: summary + turns AFTER the compressed prefix.
+  const getSessionContext = (sessionId) => {
+    const s = getSession(db, sessionId);
+    if (!s) return { summary: null, turns: [] };
+    const all = sessionHistory(db, sessionId);
+    return { summary: s.summary || null, turns: all.slice(s.turns_before_summary || 0) };
+  };
+
+  const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs, getApiKey, models, getSessionContext });
   const queue = createQueue({ db, run });
-  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug, getApiKey });
+  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug, getApiKey, models });
 
   await app.listen({ host: config.host, port: config.port });
 

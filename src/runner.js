@@ -2,6 +2,26 @@ import { spawn } from 'node:child_process';
 import { ENGINES } from './engines.js';
 import { complete } from './providers.js';
 
+// Extra claude CLI args for session continuity (pure, testable).
+// First turn of a session creates the id; later turns resume it.
+export function claudeSessionArgs(sessionId, ctx) {
+  if (!sessionId) return [];
+  const hasPrior = !!ctx && Array.isArray(ctx.turns) && ctx.turns.length > 0;
+  return hasPrior ? ['--resume', sessionId] : ['--session-id', sessionId];
+}
+
+// Transcript prepended to the prompt for non-claude CLI engines (fallback
+// continuity). Pure, testable.
+export function cliTranscript(ctx) {
+  if (!ctx) return '';
+  const parts = [];
+  if (ctx.summary) parts.push('【此前对话摘要】\n' + ctx.summary);
+  for (const t of ctx.turns || []) {
+    parts.push(`【我】${t.prompt}\n【你】${t.output ?? ''}`);
+  }
+  return parts.length ? '以下是我们此前的对话,请在此基础上继续:\n\n' + parts.join('\n\n') + '\n\n---\n\n' : '';
+}
+
 // Kill the child. On Windows with shell:true there is an intermediate cmd.exe,
 // so kill the whole process tree with taskkill; elsewhere SIGKILL suffices.
 function killChild(child) {
@@ -28,7 +48,7 @@ function killChild(child) {
  * @returns {(task:object, opts?:{signal?:AbortSignal, onData?:(text:string)=>void}) =>
  *   Promise<{status:'done'|'failed'|'canceled', output:string|null, error:string|null, exitCode:number|null}>}
  */
-export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null, models = {} }) {
+export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null, models = {}, getSessionContext = () => ({ summary: null, turns: [] }) }) {
   return function run(task, { signal, onData } = {}) {
     const engine = ENGINES[task.engine];
     if (!engine) {
@@ -37,6 +57,9 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
     if (signal?.aborted) {
       return Promise.resolve({ status: 'canceled', output: null, error: 'Canceled before start', exitCode: null });
     }
+
+    // Session continuity context (summary + prior turns), if this task is in a session.
+    const ctx = task.session_id ? getSessionContext(task.session_id) : null;
 
     // API engines call the provider over HTTP instead of spawning a CLI.
     if (engine.kind === 'api') {
@@ -48,12 +71,17 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
       return complete(engine.provider, {
         prompt: task.prompt, key, concise: !!task.concise, stream: !!task.stream,
         model, maxTokens: models.anthropicMaxTokens, onData, signal,
+        summary: ctx?.summary || null, history: ctx?.turns || [],
       });
     }
 
     return new Promise((resolve) => {
       const streaming = !!task.stream && !!engine.stream;
-      const args = streaming ? engine.stream.build(task) : engine.build(task);
+      let args = streaming ? engine.stream.build(task) : engine.build(task);
+      // Session continuity for CLI engines.
+      if (task.session_id) {
+        if (engine.bin === 'claude') args = args.concat(claudeSessionArgs(task.session_id, ctx));
+      }
       const cwd = task.cwd || defaultCwd;
       // On Windows, npm-installed CLIs are `.cmd` shims that Node (>=18.20) can
       // only launch with shell:true. The prompt goes via stdin (below), so only
@@ -76,7 +104,10 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
 
       // Deliver the prompt via stdin (cross-platform safe).
       if ((engine.promptVia || 'stdin') === 'stdin' && child.stdin) {
-        const stdinText = engine.stdinText ? engine.stdinText(task) : task.prompt;
+        let stdinText = engine.stdinText ? engine.stdinText(task) : task.prompt;
+        // claude keeps its own context via --session-id/--resume; other CLI
+        // engines get a prior-turns transcript prepended for continuity.
+        if (task.session_id && engine.bin !== 'claude') stdinText = cliTranscript(ctx) + stdinText;
         child.stdin.on('error', () => { /* ignore EPIPE if child exits early */ });
         child.stdin.write(stdinText);
         child.stdin.end();

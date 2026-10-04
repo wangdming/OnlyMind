@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncUserGuide } from './sync-user-guide.mjs';
 
 const WIN = process.platform === 'win32';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -15,10 +16,14 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const out = `onlymind-${pkg.version}.zip`;
 
 // Exact-name exclusions (dirs/files). .env.example and .gitignore are kept.
-const EXCLUDE = new Set(['node_modules', 'data', '.git', '.env', '.DS_Store', out]);
+const EXCLUDE = new Set(['node_modules', 'data', '.git', '.env', '.DS_Store', 'local', out]);
 const entries = fs.readdirSync(ROOT).filter(
   (e) => !EXCLUDE.has(e) && !e.endsWith('.zip') && !e.endsWith('.db')
 );
+
+// Refresh the customer-facing manuals in user-guide/ before packaging.
+syncUserGuide(ROOT);
+console.log('已同步 user-guide/(4 份说明书)');
 
 // Remove a stale archive so it isn't bundled.
 try { fs.rmSync(path.join(ROOT, out)); } catch { /* none */ }

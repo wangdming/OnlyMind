@@ -1,10 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openDb, insertTask, listTasks, getTask } from '../src/db.js';
+import {
+  openDb, insertTask, listTasks, getTask, markFinished,
+  createSession, sessionHistory, setSessionSummary,
+} from '../src/db.js';
 import { createQueue } from '../src/queue.js';
 import { buildServer } from '../src/server.js';
 import { ENGINES } from '../src/engines.js';
-import { spawnRunner } from '../src/runner.js';
+import { spawnRunner, claudeSessionArgs, cliTranscript } from '../src/runner.js';
+import { assembleContext } from '../src/providers.js';
 
 const TOKEN = 'test-token';
 
@@ -291,6 +295,109 @@ test('runner fails an API task when no key is configured', async () => {
   const r = await run({ engine: 'openai', prompt: 'x' }, {});
   assert.equal(r.status, 'failed');
   assert.match(r.error, /API Key/);
+});
+
+test('sessions: create / list / filter-by-engine / rename', async () => {
+  const { app } = makeApp();
+  const created = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: '  翻译项目  ', engine: 'claude' } })).json();
+  assert.equal(created.name, '翻译项目');
+  assert.equal(created.engine, 'claude');
+  assert.ok(created.id);
+  // bad engine / empty name
+  assert.equal((await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'x', engine: 'gpt' } })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: '', engine: 'claude' } })).statusCode, 400);
+  // another engine's session, then filter
+  await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'gpt 会话', engine: 'openai' } });
+  const all = (await app.inject({ method: 'GET', url: '/api/sessions', headers: auth() })).json().sessions;
+  assert.equal(all.length, 2);
+  const onlyClaude = (await app.inject({ method: 'GET', url: '/api/sessions?engine=claude', headers: auth() })).json().sessions;
+  assert.equal(onlyClaude.length, 1);
+  assert.equal(onlyClaude[0].engine, 'claude');
+  // rename
+  const renamed = (await app.inject({ method: 'PATCH', url: `/api/sessions/${created.id}`, headers: auth(), payload: { name: '新名字' } })).json();
+  assert.equal(renamed.name, '新名字');
+});
+
+test('task with session_id: validation + binding + session task list', async () => {
+  const { app, db } = makeApp();
+  const s = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 's', engine: 'claude' } })).json();
+  // engine mismatch -> 400
+  assert.equal((await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'x', engine: 'codex', session_id: s.id } })).statusCode, 400);
+  // nonexistent session -> 404
+  assert.equal((await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'x', engine: 'claude', session_id: 'nope' } })).statusCode, 404);
+  // valid
+  const t = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'hi', engine: 'claude', session_id: s.id } })).json();
+  assert.equal(t.session_id, s.id);
+  const inSession = (await app.inject({ method: 'GET', url: `/api/sessions/${s.id}/tasks`, headers: auth() })).json();
+  assert.equal(inSession.items.length, 1);
+  assert.equal(inSession.items[0].id, t.id);
+});
+
+test('delete session cascades to its tasks', async () => {
+  const { app, db } = makeApp();
+  const s = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 's', engine: 'claude' } })).json();
+  const t = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'hi', engine: 'claude', session_id: s.id } })).json();
+  const del = (await app.inject({ method: 'DELETE', url: `/api/sessions/${s.id}`, headers: auth() })).json();
+  assert.equal(del.ok, true);
+  assert.equal(del.removedTasks, 1);
+  assert.equal(getTask(db, t.id), null); // task removed with the session
+  assert.equal((await app.inject({ method: 'GET', url: `/api/sessions/${s.id}`, headers: auth() })).statusCode, 404);
+});
+
+// --- P2/P3: session continuity + compress --------------------------------
+
+test('assembleContext: system text (concise+summary) + alternating prior messages', () => {
+  const { systemText, priorMessages } = assembleContext({
+    concise: true, summary: '老王喜欢喝茶', history: [{ prompt: 'Q1', output: 'A1' }, { prompt: 'Q2', output: 'A2' }],
+  });
+  assert.match(systemText, /只输出最终答案/); // concise instruction
+  assert.match(systemText, /老王喜欢喝茶/);   // summary
+  assert.deepEqual(priorMessages, [
+    { role: 'user', content: 'Q1' }, { role: 'assistant', content: 'A1' },
+    { role: 'user', content: 'Q2' }, { role: 'assistant', content: 'A2' },
+  ]);
+  const bare = assembleContext({});
+  assert.equal(bare.systemText, null);
+  assert.deepEqual(bare.priorMessages, []);
+});
+
+test('claudeSessionArgs: first turn creates, later turns resume', () => {
+  assert.deepEqual(claudeSessionArgs(null, null), []);
+  assert.deepEqual(claudeSessionArgs('sid', { turns: [] }), ['--session-id', 'sid']);
+  assert.deepEqual(claudeSessionArgs('sid', { turns: [{ prompt: 'a', output: 'b' }] }), ['--resume', 'sid']);
+});
+
+test('cliTranscript formats summary + prior turns, empty when none', () => {
+  assert.equal(cliTranscript(null), '');
+  assert.equal(cliTranscript({ turns: [] }), '');
+  const t = cliTranscript({ summary: 'S', turns: [{ prompt: 'Q', output: 'A' }] });
+  assert.match(t, /此前对话摘要/);
+  assert.match(t, /【我】Q/);
+  assert.match(t, /【你】A/);
+});
+
+test('sessionHistory returns only done turns; setSessionSummary stores summary+offset', () => {
+  const db = openDb(':memory:');
+  createSession(db, { id: 's1', name: 'n', engine: 'openai', now: 1 });
+  insertTask(db, { id: 't1', prompt: 'Q1', engine: 'openai', cwd: null, session_id: 's1', created_at: 2 });
+  markFinished(db, 't1', { status: 'done', output: 'A1', error: null, exitCode: 0, finishedAt: 3 });
+  insertTask(db, { id: 't2', prompt: 'Q2', engine: 'openai', cwd: null, session_id: 's1', created_at: 4 }); // queued
+  const hist = sessionHistory(db, 's1');
+  assert.equal(hist.length, 1);
+  assert.equal(hist[0].prompt, 'Q1');
+  assert.equal(hist[0].output, 'A1');
+  const s = setSessionSummary(db, 's1', 'SUM', 1, 99);
+  assert.equal(s.summary, 'SUM');
+  assert.equal(s.turns_before_summary, 1);
+});
+
+test('compress: 404 unknown / 400 for CLI engine / 400 without key', async () => {
+  const { app } = makeApp(); // no getApiKey → API engine has no key
+  assert.equal((await app.inject({ method: 'POST', url: '/api/sessions/nope/compress', headers: auth() })).statusCode, 404);
+  const cli = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'c', engine: 'claude' } })).json();
+  assert.equal((await app.inject({ method: 'POST', url: `/api/sessions/${cli.id}/compress`, headers: auth() })).statusCode, 400);
+  const api = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'a', engine: 'openai' } })).json();
+  assert.equal((await app.inject({ method: 'POST', url: `/api/sessions/${api.id}/compress`, headers: auth() })).statusCode, 400);
 });
 
 test('GET /api/version returns current and no update when repoSlug unset', async () => {
