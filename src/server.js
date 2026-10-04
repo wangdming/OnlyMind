@@ -1,8 +1,9 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { randomUUID } from 'node:crypto';
-import { insertTask, getTask, listTasks } from './db.js';
-import { isValidEngine, engineList } from './engines.js';
+import { insertTask, getTask, listTasks, setSetting } from './db.js';
+import { isValidEngine, engineList, ENGINES } from './engines.js';
+import { validateKey } from './providers.js';
 import { taskBus } from './events.js';
 
 /**
@@ -24,7 +25,7 @@ function cmpVer(a, b) {
   return 0;
 }
 
-export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, now = () => Date.now() }) {
+export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, getApiKey = () => null, now = () => Date.now() }) {
   const app = Fastify({ logger: false });
 
   // --- Auth: every /api route requires a valid token ----------------------
@@ -74,7 +75,26 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     };
   });
 
-  app.get('/api/engines', async () => ({ engines: engineList() }));
+  app.get('/api/engines', async () => ({ engines: engineList((p) => !!getApiKey(p)) }));
+
+  // Which providers already have a key stored (never returns the key itself).
+  app.get('/api/keys', async () => ({
+    openai: !!getApiKey('openai'),
+    anthropic: !!getApiKey('anthropic'),
+  }));
+
+  // Validate an API key against the provider; store it only if valid.
+  app.post('/api/keys', async (req, reply) => {
+    const body = req.body || {};
+    const provider = body.provider;
+    const key = typeof body.key === 'string' ? body.key.trim() : '';
+    if (!['openai', 'anthropic'].includes(provider)) return reply.code(400).send({ ok: false, error: `未知提供方: ${provider}` });
+    if (!key) return reply.code(400).send({ ok: false, error: 'API Key 不能为空' });
+    const result = await validateKey(provider, key);
+    if (!result.ok) return reply.code(400).send({ ok: false, error: result.error });
+    setSetting(db, `${provider}_api_key`, key);
+    return { ok: true };
+  });
 
   app.post('/api/tasks', async (req, reply) => {
     const body = req.body || {};
@@ -87,6 +107,10 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
 
     if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
     if (!isValidEngine(engine)) return reply.code(400).send({ error: `unknown engine: ${engine}` });
+    const eng = ENGINES[engine];
+    if (eng.kind === 'api' && !getApiKey(eng.provider)) {
+      return reply.code(400).send({ error: `引擎 ${engine} 需要先设置 ${eng.provider} API Key` });
+    }
 
     const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd, stream, concise, created_at: now() });
     queue.enqueue(task.id);

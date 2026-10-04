@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS settings (
+  name  TEXT PRIMARY KEY,
+  value TEXT
+);
 `;
 
 // Lightweight migrations for databases created by an earlier version.
@@ -56,6 +61,17 @@ export function insertTask(db, task) {
     task.stream ? 1 : 0, task.concise ? 1 : 0, task.created_at
   );
   return getTask(db, task.id);
+}
+
+export function getSetting(db, name) {
+  const row = db.prepare('SELECT value FROM settings WHERE name = ?').get(name);
+  return row ? row.value : null;
+}
+export function setSetting(db, name, value) {
+  db.prepare(
+    `INSERT INTO settings (name, value) VALUES (?, ?)
+     ON CONFLICT(name) DO UPDATE SET value = excluded.value`
+  ).run(name, value);
 }
 
 /** Append streamed output to a task incrementally. */

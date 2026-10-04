@@ -62,7 +62,7 @@ npm start          # 终端会打印访问地址(含 LAN 地址)和 ACCESS TOKEN
 ## 特性
 
 - 📱 手机网页(PWA,可加到主屏幕),免安装
-- 🔀 Claude Code / Codex 两引擎,提交时切换
+- 🔀 四种引擎:Claude Code / Codex(CLI,可操作电脑)+ OpenAI API / Anthropic API(纯问答);手机端切换,API 引擎在线验证 Key
 - 🗂 任务 + 结果持久化到本地 SQLite,游标分页查历史
 - 🧵 串行队列(并发=1),崩溃自动恢复
 - ⏱ 实时流式输出(SSE,**默认关闭**,可按任务开启)

@@ -53,8 +53,9 @@
 |------|------|
 | `config.js` | 读取环境变量,生成/读取令牌,集中配置 |
 | `db.js` | 打开 SQLite、建表、任务的增查改、分页、孤儿恢复 |
-| `engines.js` | 各引擎的命令构造 + 输出解析;含流式(stream-json)构造与逐行解析 |
-| `runner.js` | 默认执行器:spawn 子进程、捕获输出、超时、**流式 onData 回调**、**AbortSignal 取消**。永不 reject |
+| `engines.js` | 引擎注册表:`kind:'cli'`(claude/codex,spawn)与 `kind:'api'`(openai/anthropic,需 Key)+ 元数据 |
+| `providers.js` | OpenAI / Anthropic REST 调用:Key 验证(models 端点)+ 补全(含 SSE 流式) |
+| `runner.js` | 执行器:CLI 引擎 spawn 子进程(超时/流式/取消);**API 引擎走 providers HTTP**。永不 reject |
 | `queue.js` | 串行队列(并发=1),状态机推进,启动恢复,**取消**,流式增量落库 + 发事件 |
 | `events.js` | 任务事件总线(EventEmitter):`chunk:<id>` / `status:<id>`,供 SSE 消费 |
 | `server.js` | Fastify 应用工厂:鉴权钩子 + 路由(含取消/重跑/SSE)+ 静态托管。依赖注入便于测试 |

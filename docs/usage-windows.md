@@ -21,14 +21,14 @@ node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
 
 ```powershell
 $env:ONLYMIND_TOKEN = "你的令牌"
-npm start
+npm run onlymind
 ```
 保持此窗口开着。看到 `OnlyMind is running` 即成功。
 
 ### ③ 窗口 B —— 开启临时隧道(让手机在任意网络可访问)
 
 ```powershell
-npm run tunnel
+npm run onlymind:remote
 ```
 几秒后它会打印一个公网网址:
 ```
@@ -48,7 +48,8 @@ https://xxxx-xxxx-xxxx.trycloudflare.com
 4. (可选)浏览器「添加到主屏幕」,像 App 一样用。
 5. 发任务:
    - **任务内容**:自然语言,例如「在 C:\code\foo 里把测试跑一遍,把失败的贴出来」。
-   - **引擎**:Claude Code 或 Codex。
+   - **引擎**:`Claude Code` / `Codex`(CLI,可操作电脑,无需 Key)或 `OpenAI API` / `Anthropic API`(纯问答,需 API Key)。
+     - 选 API 引擎时若未设 Key,引擎下方会出现输入框,填入并「验证并保存」后即可使用;也可在右上角 ⚙︎ 设置里统一管理 Key。Key 存在电脑端,验证通过才保存。
    - **工作目录**(可选):任务要操作的目录;留空用服务端默认目录。
    - **简洁回答**:默认已勾选 → 只给最终结果;想要完整解释/代码就**取消勾选**。
    - **实时流式输出**(可选):勾选可边跑边看。

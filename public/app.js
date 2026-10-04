@@ -7,6 +7,9 @@ const state = {
   token: localStorage.getItem('onlymind_token') || '',
   streamPref: localStorage.getItem('onlymind_stream') === '1',
   concisePref: localStorage.getItem('onlymind_concise') !== '0', // default ON
+  enginePref: localStorage.getItem('onlymind_engine') || '',
+  engines: [],       // full metadata from /api/engines
+  engineById: {},
 
   nextCursor: null,
   loading: false,
@@ -193,8 +196,53 @@ async function loadVersion() {
 async function loadEngines() {
   try {
     const { engines } = await api('/api/engines');
+    state.engines = engines;
+    state.engineById = Object.fromEntries(engines.map((e) => [e.id, e]));
     $('engine').innerHTML = engines.map((e) => `<option value="${e.id}">${e.label}</option>`).join('');
+    // Restore the user's last engine choice if still valid.
+    if (state.enginePref && state.engineById[state.enginePref]) $('engine').value = state.enginePref;
+    refreshEngineKeyUI();
+    refreshKeyStatus();
   } catch { /* surfaced elsewhere */ }
+}
+
+function selectedEngine() { return state.engineById[$('engine').value]; }
+
+// Show the inline "enter API key" row when the chosen engine needs a key but
+// none is set yet.
+function refreshEngineKeyUI() {
+  const e = selectedEngine();
+  const need = e && e.kind === 'api' && !e.keySet;
+  $('apiKeyRow').classList.toggle('hidden', !need);
+  if (need) {
+    $('apiKeyProvider').textContent = e.provider;
+    $('apiKeyInput').placeholder = e.provider === 'openai' ? 'sk-...' : 'sk-ant-...';
+    $('apiKeyMsg').textContent = '';
+  }
+}
+
+// Reflect stored-key status in the settings panel.
+function refreshKeyStatus() {
+  for (const p of ['openai', 'anthropic']) {
+    const set = !!state.engineById[p]?.keySet;
+    const el = $(`st-${p}`);
+    if (el) { el.textContent = set ? '· 已设置' : '· 未设置'; el.className = `keystat ${set ? 'set' : 'unset'}`; }
+  }
+}
+
+// Validate + store an API key via the server, then refresh engine metadata.
+async function saveKey(provider, key, msgEl) {
+  if (!key) { msgEl.textContent = '请输入 API Key'; return false; }
+  msgEl.textContent = '验证中…';
+  try {
+    await api('/api/keys', { method: 'POST', body: JSON.stringify({ provider, key }) });
+    msgEl.textContent = '已验证并保存 ✓';
+    await loadEngines(); // keySet now true
+    return true;
+  } catch (e) {
+    msgEl.textContent = e.message; // e.g. API Key 无效
+    return false;
+  }
 }
 
 async function loadMore(reset = false) {
@@ -260,9 +308,38 @@ $('concise').addEventListener('change', () => {
   localStorage.setItem('onlymind_concise', state.concisePref ? '1' : '0');
 });
 
+$('engine').addEventListener('change', () => {
+  state.enginePref = $('engine').value;
+  localStorage.setItem('onlymind_engine', state.enginePref);
+  refreshEngineKeyUI();
+});
+
+// Inline "enter key for this engine" (shown under the engine dropdown).
+$('apiKeySave').addEventListener('click', async () => {
+  const e = selectedEngine();
+  if (!e || e.kind !== 'api') return;
+  const ok = await saveKey(e.provider, $('apiKeyInput').value.trim(), $('apiKeyMsg'));
+  if (ok) { $('apiKeyInput').value = ''; refreshEngineKeyUI(); }
+});
+
+// Key management inside the settings panel (gear).
+for (const btn of document.querySelectorAll('.keysave')) {
+  btn.addEventListener('click', async () => {
+    const p = btn.dataset.provider;
+    const ok = await saveKey(p, $(`key-${p}`).value.trim(), $('keyMsg'));
+    if (ok) $(`key-${p}`).value = '';
+  });
+}
+
 $('submit').addEventListener('click', async () => {
   const prompt = $('prompt').value.trim();
   if (!prompt) { $('submitMsg').textContent = '请输入任务内容'; return; }
+  const eng = selectedEngine();
+  if (eng && eng.kind === 'api' && !eng.keySet) {
+    $('submitMsg').textContent = `请先为 ${eng.provider} 设置并验证 API Key`;
+    refreshEngineKeyUI();
+    return;
+  }
   $('submit').disabled = true;
   $('submitMsg').textContent = '发送中…';
   try {

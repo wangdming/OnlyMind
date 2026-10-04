@@ -47,4 +47,8 @@ export const config = {
   // Hard timeout for a single task execution.
   taskTimeoutMs: envInt('ONLYMIND_TASK_TIMEOUT_MS', 10 * 60 * 1000),
   publicDir: path.join(projectRoot, 'public'),
+  // API-engine models (overridable; set to whatever your account supports).
+  openaiModel: process.env.OPENAI_MODEL || 'gpt-4o',
+  anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+  anthropicMaxTokens: envInt('ANTHROPIC_MAX_TOKENS', 4096),
 };

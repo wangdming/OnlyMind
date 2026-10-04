@@ -79,6 +79,14 @@ button.icon-btn { background: none; font-size: 20px; padding: 4px 8px; }
 .task .actions .cancel { background: #3b2130; color: #fca5a5; }
 .task .actions .rerun { background: #1f2b1f; color: #86efac; }
 
+h3.sub { font-size: 13px; color: var(--muted); margin: 18px 0 8px; font-weight: 600; }
+.keysave { margin-top: 2px; font-size: 14px; }
+.keystat { font-size: 11px; font-weight: 600; }
+.keystat.set { color: var(--ok); }
+.keystat.unset { color: var(--muted); }
+.card.inline { margin: 0 0 12px; padding: 12px; background: #0e1424; border: 1px solid #263150; }
+.card.inline button { margin-top: 2px; }
+
 label.checkbox {
   display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 14px;
 }

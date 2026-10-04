@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { ENGINES } from './engines.js';
+import { complete } from './providers.js';
 
 // Kill the child. On Windows with shell:true there is an intermediate cmd.exe,
 // so kill the whole process tree with taskkill; elsewhere SIGKILL suffices.
@@ -27,19 +28,30 @@ function killChild(child) {
  * @returns {(task:object, opts?:{signal?:AbortSignal, onData?:(text:string)=>void}) =>
  *   Promise<{status:'done'|'failed'|'canceled', output:string|null, error:string|null, exitCode:number|null}>}
  */
-export function spawnRunner({ defaultCwd, taskTimeoutMs }) {
+export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null, models = {} }) {
   return function run(task, { signal, onData } = {}) {
-    return new Promise((resolve) => {
-      const engine = ENGINES[task.engine];
-      if (!engine) {
-        resolve({ status: 'failed', output: null, error: `Unknown engine: ${task.engine}`, exitCode: null });
-        return;
-      }
-      if (signal?.aborted) {
-        resolve({ status: 'canceled', output: null, error: 'Canceled before start', exitCode: null });
-        return;
-      }
+    const engine = ENGINES[task.engine];
+    if (!engine) {
+      return Promise.resolve({ status: 'failed', output: null, error: `Unknown engine: ${task.engine}`, exitCode: null });
+    }
+    if (signal?.aborted) {
+      return Promise.resolve({ status: 'canceled', output: null, error: 'Canceled before start', exitCode: null });
+    }
 
+    // API engines call the provider over HTTP instead of spawning a CLI.
+    if (engine.kind === 'api') {
+      const key = getApiKey(engine.provider);
+      if (!key) {
+        return Promise.resolve({ status: 'failed', output: null, error: `未设置 ${engine.provider} API Key,请在手机「设置」中填写并验证`, exitCode: null });
+      }
+      const model = engine.provider === 'openai' ? models.openai : models.anthropic;
+      return complete(engine.provider, {
+        prompt: task.prompt, key, concise: !!task.concise, stream: !!task.stream,
+        model, maxTokens: models.anthropicMaxTokens, onData, signal,
+      });
+    }
+
+    return new Promise((resolve) => {
       const streaming = !!task.stream && !!engine.stream;
       const args = streaming ? engine.stream.build(task) : engine.build(task);
       const cwd = task.cwd || defaultCwd;

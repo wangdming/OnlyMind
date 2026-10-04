@@ -10,6 +10,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "onlymind": "node src/index.js",
+    "onlymind:remote": "node scripts/tunnel.mjs",
     "dev": "node --watch src/index.js",
     "doctor": "node scripts/doctor.mjs",
     "check:tunnel": "node scripts/check-tunnel.mjs",

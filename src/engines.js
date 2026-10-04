@@ -19,7 +19,8 @@ export const CONCISE_INSTRUCTION =
 
 export const ENGINES = {
   claude: {
-    label: 'Claude Code',
+    label: 'Claude Code(CLI,可操作电脑)',
+    kind: 'cli',
     bin: 'claude',
     promptVia: 'stdin',
     // Concise is injected via stdin (not --append-system-prompt) so that every
@@ -75,7 +76,8 @@ export const ENGINES = {
   },
 
   codex: {
-    label: 'Codex',
+    label: 'Codex(CLI,可操作电脑)',
+    kind: 'cli',
     bin: 'codex',
     promptVia: 'stdin',
     // codex has no system-prompt flag, so concise is prepended to the prompt.
@@ -98,12 +100,34 @@ export const ENGINES = {
       },
     },
   },
+
+  // --- API engines (pure Q&A via official REST APIs; need an API Key) --------
+  openai: {
+    label: 'OpenAI API(ChatGPT 问答)',
+    kind: 'api',
+    provider: 'openai',
+    needsKey: true,
+  },
+  anthropic: {
+    label: 'Anthropic API(Claude 问答)',
+    kind: 'api',
+    provider: 'anthropic',
+    needsKey: true,
+  },
 };
 
 export function isValidEngine(engine) {
   return Object.prototype.hasOwnProperty.call(ENGINES, engine);
 }
 
-export function engineList() {
-  return Object.entries(ENGINES).map(([id, e]) => ({ id, label: e.label }));
+// Full metadata for the client. keySet(provider) tells whether a key is stored.
+export function engineList(keySet = () => false) {
+  return Object.entries(ENGINES).map(([id, e]) => ({
+    id,
+    label: e.label,
+    kind: e.kind || 'cli',
+    needsKey: !!e.needsKey,
+    provider: e.provider || null,
+    keySet: e.needsKey ? !!keySet(e.provider) : true,
+  }));
 }

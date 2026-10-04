@@ -21,6 +21,19 @@
     </label>
     <button id="saveToken">保存</button>
     <p id="connStatus" class="muted"></p>
+
+    <div id="keysBox">
+      <h3 class="sub">API Key(用于 OpenAI / Anthropic 引擎)</h3>
+      <label>OpenAI API Key <span id="st-openai" class="keystat"></span>
+        <input id="key-openai" type="password" placeholder="sk-..." autocomplete="off" />
+      </label>
+      <button class="keysave" data-provider="openai">验证并保存</button>
+      <label>Anthropic API Key <span id="st-anthropic" class="keystat"></span>
+        <input id="key-anthropic" type="password" placeholder="sk-ant-..." autocomplete="off" />
+      </label>
+      <button class="keysave" data-provider="anthropic">验证并保存</button>
+      <p id="keyMsg" class="muted"></p>
+    </div>
   </section>
 
   <!-- New task -->
@@ -32,6 +45,13 @@
       <label class="grow">引擎
         <select id="engine"></select>
       </label>
+    </div>
+    <div id="apiKeyRow" class="card inline hidden">
+      <label>该引擎需要 <span id="apiKeyProvider"></span> API Key
+        <input id="apiKeyInput" type="password" placeholder="输入 API Key 后验证" autocomplete="off" />
+      </label>
+      <button id="apiKeySave">验证并保存</button>
+      <p id="apiKeyMsg" class="muted"></p>
     </div>
     <label>工作目录(可选)
       <input id="cwd" type="text" placeholder="默认用服务端 HOME,例如 /Users/you/projects/foo" />

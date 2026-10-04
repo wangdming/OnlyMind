@@ -43,15 +43,33 @@
 
 ## GET /api/engines
 
-列出支持的引擎(供手机端下拉选择)。
+列出支持的引擎(供手机端下拉选择)。`kind=cli` 为可操作电脑的 agent(无需 Key);`kind=api` 为纯问答(需 API Key)。`keySet` 表示该 API 引擎的 Key 是否已配置。
 
 **响应 200**
 ```json
 { "engines": [
-  { "id": "claude", "label": "Claude Code" },
-  { "id": "codex",  "label": "Codex" }
+  { "id": "claude",    "label": "Claude Code(CLI,可操作电脑)", "kind": "cli", "needsKey": false, "provider": null,        "keySet": true },
+  { "id": "codex",     "label": "Codex(CLI,可操作电脑)",       "kind": "cli", "needsKey": false, "provider": null,        "keySet": true },
+  { "id": "openai",    "label": "OpenAI API(ChatGPT 问答)",     "kind": "api", "needsKey": true,  "provider": "openai",    "keySet": false },
+  { "id": "anthropic", "label": "Anthropic API(Claude 问答)",   "kind": "api", "needsKey": true,  "provider": "anthropic", "keySet": false }
 ] }
 ```
+
+---
+
+## GET /api/keys
+
+返回各提供方的 Key 是否已配置(**不返回 Key 本身**)。
+
+**响应 200**:`{ "openai": false, "anthropic": false }`
+
+## POST /api/keys
+
+在线**验证** API Key(对提供方发一次请求),通过才存储到电脑端。
+
+**请求体**:`{ "provider": "openai" | "anthropic", "key": "sk-..." }`
+**响应 200**:`{ "ok": true }`
+**错误**:`400 { "ok": false, "error": "API Key 无效或无权限" }` / 未知 provider / 空 key。
 
 ---
 
@@ -63,8 +81,8 @@
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `prompt` | string | 是 | 任务内容 |
-| `engine` | string | 否 | `claude`(默认)/ `codex` |
-| `cwd` | string | 否 | 工作目录;省略则用服务端默认 |
+| `engine` | string | 否 | `claude`(默认)/ `codex` / `openai` / `anthropic`。API 引擎需先配置对应 Key,否则返回 400 |
+| `cwd` | string | 否 | 工作目录;省略则用服务端默认(仅 CLI 引擎有效) |
 | `stream` | boolean | 否 | 是否流式(默认 `false`)。为 `true` 时引擎以 stream-json 运行,可通过 SSE 实时查看 |
 
 ```json

@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { openDb } from './db.js';
+import { openDb, getSetting } from './db.js';
 import { createQueue } from './queue.js';
 import { spawnRunner } from './runner.js';
 import { buildServer } from './server.js';
@@ -18,9 +18,14 @@ function localIps() {
 
 async function main() {
   const db = openDb(config.dbPath);
-  const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs });
+  // API key resolution: stored setting first, then environment variable fallback.
+  const envKey = { openai: process.env.OPENAI_API_KEY, anthropic: process.env.ANTHROPIC_API_KEY };
+  const getApiKey = (provider) => getSetting(db, `${provider}_api_key`) || envKey[provider] || null;
+  const models = { openai: config.openaiModel, anthropic: config.anthropicModel, anthropicMaxTokens: config.anthropicMaxTokens };
+
+  const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs, getApiKey, models });
   const queue = createQueue({ db, run });
-  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug });
+  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug, getApiKey });
 
   await app.listen({ host: config.host, port: config.port });
 

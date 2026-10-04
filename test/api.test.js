@@ -4,6 +4,7 @@ import { openDb, insertTask, listTasks, getTask } from '../src/db.js';
 import { createQueue } from '../src/queue.js';
 import { buildServer } from '../src/server.js';
 import { ENGINES } from '../src/engines.js';
+import { spawnRunner } from '../src/runner.js';
 
 const TOKEN = 'test-token';
 
@@ -243,6 +244,51 @@ test('rerun copies a task into a new queued task', async () => {
   assert.equal(body.cwd, '/tmp');
   assert.equal(body.stream, 1);
   assert.equal(body.status, 'queued');
+});
+
+test('engines list includes API engines with needsKey/keySet', async () => {
+  const { app } = makeApp();
+  const { engines } = (await app.inject({ method: 'GET', url: '/api/engines', headers: auth() })).json();
+  const openai = engines.find((e) => e.id === 'openai');
+  assert.equal(openai.kind, 'api');
+  assert.equal(openai.needsKey, true);
+  assert.equal(openai.keySet, false); // no getApiKey in makeApp
+  const claude = engines.find((e) => e.id === 'claude');
+  assert.equal(claude.kind, 'cli');
+  assert.equal(claude.keySet, true); // cli never needs a key
+});
+
+test('API-engine task without a key is rejected (400)', async () => {
+  const { app } = makeApp();
+  const res = await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'hi', engine: 'openai' } });
+  assert.equal(res.statusCode, 400);
+});
+
+test('/api/keys status + validation of provider/key', async () => {
+  const { app } = makeApp();
+  const st = (await app.inject({ method: 'GET', url: '/api/keys', headers: auth() })).json();
+  assert.equal(st.openai, false);
+  assert.equal(st.anthropic, false);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/keys', headers: auth(), payload: { provider: 'nope', key: 'k' } })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/keys', headers: auth(), payload: { provider: 'openai', key: '' } })).statusCode, 400);
+});
+
+test('injected getApiKey enables the API engine (keySet + task accepted)', async () => {
+  const db = openDb(':memory:');
+  const queue = fakeQueue();
+  const app = buildServer({ db, queue, token: TOKEN, getApiKey: (p) => (p === 'openai' ? 'sk-test' : null) });
+  const { engines } = (await app.inject({ method: 'GET', url: '/api/engines', headers: auth() })).json();
+  assert.equal(engines.find((e) => e.id === 'openai').keySet, true);
+  assert.equal(engines.find((e) => e.id === 'anthropic').keySet, false);
+  const res = await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'hi', engine: 'openai' } });
+  assert.equal(res.statusCode, 201);
+});
+
+test('runner fails an API task when no key is configured', async () => {
+  const run = spawnRunner({ defaultCwd: '/tmp', taskTimeoutMs: 1000, getApiKey: () => null, models: {} });
+  const r = await run({ engine: 'openai', prompt: 'x' }, {});
+  assert.equal(r.status, 'failed');
+  assert.match(r.error, /API Key/);
 });
 
 test('GET /api/version returns current and no update when repoSlug unset', async () => {
