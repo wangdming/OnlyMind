@@ -33,6 +33,7 @@
 - **v0.5 / v0.5.1**:(已废弃)早期做过一套连通诊断脚本并带 `--json`;v0.7 起连通层从 Tailscale 整体切换到 Cloudflare,相关旧脚本已移除。
 - **v0.6**:公网远程访问方案(满足「手机同时翻墙 + 用 OnlyMind」)—— Cloudflare Tunnel + Access,新增 [docs/08-remote-access.md]、隧道脚本(`tunnel-macos.sh`/`tunnel-windows.ps1`、`npm run tunnel`)、`cloudflared-config.example.yml`,doctor 识别 cloudflared。含中国大陆坑的处理(http2 + 走本地代理)。
 - **v0.8**:每任务「简洁回答」开关(默认开启)——简洁指令经 **stdin** 注入(claude/codex 一致),命令行参数全为纯 ASCII,Windows `shell:true` 下无编码/转义风险;新增 `concise` 列 + 手机端复选框(持久化)。
+- **v0.13**:历史任务**打开性能优化** —— 列表接口 `/api/tasks` 改为**轻量返回**(排除 `output`/`error` 两个大字段),历史页加载更快、流量更小;**点开某任务时才 `GET /api/tasks/:id` 取完整结果**,并配 **loading 蒙层**提供即时反馈;运行中/流式任务走 SSE。另:会话管理写入设计文档 [docs/09-sessions.md](待实现)。
 - **v0.12**:**新增 OpenAI / Anthropic API 引擎**(纯问答)。`src/providers.js`(Key 验证 + 补全含 SSE 流式);引擎分 `kind` cli/api;API Key 存电脑端(`settings` 表,env 兜底),`POST /api/keys` 在线验证后才存、`GET /api/keys` 查状态、`/api/engines` 带 `kind/needsKey/keySet`;提交 API 引擎任务无 Key 返回 400。手机端:选引擎→若 API 且无 Key 则就地要求输入并验证,齿轮设置里统一管理 Key。启动/隧道命令品牌化为 `npm run onlymind` / `npm run onlymind:remote`。本机验证:四引擎元数据、无 Key 400、真实无效 Key 验证报错、CLI 回归、测试 22→27 全过。
 - **v0.11**:**GitHub 分发 + 一键更新**。仓库 https://github.com/wangdming/OnlyMind(public)。新增 `scripts/update.mjs`(`npm run update` / `check:update`:git 检出→`git pull`;zip 下载→拉最新 Release tarball 覆盖,保留 `data/`、`.env`)、`.github/workflows/release.yml`(打 tag `v*` 自动打包发 Release)、`/api/version` 接口(含 GitHub 最新版对比,缓存 6h)、手机网页底部**显示当前版本并在有新版时提示**、`package.json` 的 `repository` 字段。公开仓库客户下载/克隆/更新**无需 GitHub 账号**。发版流程:改 version → `git tag vX.Y.Z && git push --tags`。本机已验证:仓库创建推送、Release Action 成功产出 zip、git/下载两种更新模式检测均正常。
 - **v0.10**:脚本统一命名 + 跨平台收敛 —— 可跨平台的工具全部改为 Node 核心、经 `npm run` 调用(`doctor` / `check:tunnel` / `tunnel` / `package`,macOS/Windows 通用,`tunnel` 不再依赖 bash);开机自启按用途命名为 `autostart-install/uninstall.{sh,ps1}`;删除冗余的 per-OS 一键包装;新增 `scripts/package.mjs` 打包交付 zip(排除 node_modules/data/.env/*.db)。安装手册顶部加「给大模型的总指令」。
@@ -75,5 +76,7 @@ v0.1 的 10 项,外加 v0.2 新增:
 - [ ] 安装 codex 后补一次真实链路(含流式)验证;codex 经 stdin 的 `-` 约定待确认。
 - [ ] 公网方案实跑验证:需你的 Cloudflare 域名 + 账号(cloudflared login / Access 策略),本机无法代跑;脚本与文档已就绪。
 - [ ] 验证电脑在墙内连 Cloudflare 的稳定性(http2 + 本地代理两招已写入 docs/08)。
+- [ ] **会话管理**(多轮续接 / 按引擎分组 / 重命名·删除·压缩)——已评估可行并写入设计文档 [docs/09-sessions.md],**暂不实现**。压缩 = 总结历史省 token。
+- [ ] 历史任务打开性能:已优化为「点开即时从列表缓存渲染 + loading 蒙层」(见下方版本记录)。
 - [ ] 输出超长时的截断与「查看完整」。
 - [ ] 任务搜索 / 按状态过滤。

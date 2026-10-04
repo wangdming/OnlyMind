@@ -118,7 +118,9 @@ test('queue runs tasks serially and persists results', async () => {
   assert.deepEqual(order, ['t0', 't1', 't2']);
   const done = listTasks(db, { limit: 10 }).items;
   assert.ok(done.every((t) => t.status === 'done'));
-  assert.ok(done.every((t) => t.output.startsWith('out:')));
+  assert.equal(done[0].output, undefined, 'list must NOT include heavy output');
+  // output is available via getTask (full fetch on open)
+  assert.ok(done.every((t) => getTask(db, t.id).output.startsWith('out:')));
 });
 
 test('queue records failures from the runner', async () => {
@@ -129,7 +131,7 @@ test('queue records failures from the runner', async () => {
   const t = insertTask(db, { id: 'f1', prompt: 'x', engine: 'claude', cwd: null, created_at: 1 });
   queue.enqueue(t.id);
   await queue.drain();
-  const got = listTasks(db, { limit: 1 }).items[0];
+  const got = getTask(db, 'f1');
   assert.equal(got.status, 'failed');
   assert.equal(got.error, 'boom');
   assert.equal(got.exit_code, 1);
@@ -141,7 +143,7 @@ test('startup fails orphaned running tasks', async () => {
   db.prepare(`UPDATE tasks SET status='running' WHERE id='orphan'`).run();
   // Constructing a queue should recover orphans.
   createQueue({ db, run: async () => ({ status: 'done' }), now: () => 99 });
-  const got = listTasks(db, { limit: 1 }).items[0];
+  const got = getTask(db, 'orphan');
   assert.equal(got.status, 'failed');
   assert.match(got.error, /restart/i);
 });

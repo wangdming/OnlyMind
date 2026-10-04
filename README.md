@@ -83,6 +83,7 @@ npm start          # 终端会打印访问地址(含 LAN 地址)和 ACCESS TOKEN
 6. [接口文档](./docs/06-api.md)
 7. [工作进度](./docs/07-progress.md)
 8. [远程访问(Cloudflare Tunnel + Access)](./docs/08-remote-access.md) — 手机同时翻墙 + 用 OnlyMind
+9. [会话管理(设计草案,规划中)](./docs/09-sessions.md) — 多轮续接 / 按引擎分组 / 重命名·删除·压缩
 
 ## ⚠️ 安全提醒
 

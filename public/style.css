@@ -52,8 +52,19 @@ button.icon-btn { background: none; font-size: 20px; padding: 4px 8px; }
 
 .task {
   background: var(--card); margin: 8px 16px; border-radius: 12px;
-  padding: 12px 14px; cursor: pointer;
+  padding: 12px 14px; cursor: pointer; position: relative;
 }
+.task .overlay {
+  position: absolute; inset: 0; z-index: 3; border-radius: 12px;
+  background: rgba(11, 16, 32, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.task .spinner {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.25); border-top-color: var(--accent);
+  animation: om-spin 0.7s linear infinite;
+}
+@keyframes om-spin { to { transform: rotate(360deg); } }
 .task .top { display: flex; align-items: center; gap: 8px; }
 .task .badge {
   font-size: 11px; padding: 2px 8px; border-radius: 999px;

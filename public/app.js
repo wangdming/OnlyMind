@@ -55,7 +55,8 @@ function createCard(t) {
       <div class="time"></div>
     </div>
     <div class="output hidden"></div>
-    <div class="actions hidden"></div>`;
+    <div class="actions hidden"></div>
+    <div class="overlay hidden"><div class="spinner"></div></div>`;
   el.refs = {
     badge: el.querySelector('.badge'),
     live: el.querySelector('.live-dot'),
@@ -64,15 +65,20 @@ function createCard(t) {
     time: el.querySelector('.time'),
     output: el.querySelector('.output'),
     actions: el.querySelector('.actions'),
+    overlay: el.querySelector('.overlay'),
   };
   el._es = null;
   el._open = false;
+  el._task = t;
   el.querySelector('.header').addEventListener('click', () => toggleCard(el, t.id));
   state.cards.set(t.id, el);
   return el;
 }
 
+function showLoading(el, on) { el.refs.overlay.classList.toggle('hidden', !on); }
+
 function updateCard(el, t) {
+  el._task = t; // cache so opening is instant (no network round-trip)
   el.dataset.status = t.status;
   el.refs.badge.textContent = t.status;
   el.refs.badge.className = `badge ${t.status}`;
@@ -112,29 +118,39 @@ function renderActions(el, t) {
   }
 }
 
-async function toggleCard(el, id) {
+function toggleCard(el, id) {
   if (el._open) { closeCard(el); return; }
   el._open = true;
-  const t = await api(`/api/tasks/${id}`);
   el.refs.output.classList.remove('hidden');
   el.refs.actions.classList.remove('hidden');
 
-  if (t.stream && !DONE.has(t.status)) {
-    startStream(el, t);
+  const t = el._task; // from the list — has status/prompt/… but NOT output/error
+  if (t && t.stream && !DONE.has(t.status)) {
+    // Live task: connect SSE; show overlay until the first data arrives.
+    showLoading(el, true);
+    startStream(el, t, () => showLoading(el, false));
   } else {
-    updateCard(el, t);
+    // List is lightweight (no output); fetch the full task on open.
+    showLoading(el, true);
+    api(`/api/tasks/${id}`)
+      .then((ft) => updateCard(el, ft))
+      .catch(() => { el.refs.output.textContent = '加载失败,请重试'; })
+      .finally(() => showLoading(el, false));
   }
 }
 
 function closeCard(el) {
   el._open = false;
   stopStream(el);
+  showLoading(el, false);
   el.refs.output.classList.add('hidden');
   el.refs.actions.classList.add('hidden');
 }
 
 // ---- SSE live streaming ---------------------------------------------------
-function startStream(el, t) {
+function startStream(el, t, onReady = () => {}) {
+  let ready = false;
+  const done1 = () => { if (!ready) { ready = true; onReady(); } };
   el.refs.output.classList.remove('err');
   el.refs.output.textContent = t.output || '';
   const es = new EventSource(`/api/tasks/${t.id}/stream?token=${encodeURIComponent(state.token)}`);
@@ -144,10 +160,12 @@ function startStream(el, t) {
   es.addEventListener('snapshot', (e) => {
     const snap = JSON.parse(e.data);
     el.refs.output.textContent = snap.output || '';
+    done1();
   });
   es.addEventListener('chunk', (e) => {
     el.refs.output.textContent += JSON.parse(e.data).text;
     el.refs.output.scrollTop = el.refs.output.scrollHeight;
+    done1();
   });
   es.addEventListener('status', (e) => {
     el.dataset.status = JSON.parse(e.data).status;
@@ -155,8 +173,9 @@ function startStream(el, t) {
   es.addEventListener('done', async () => {
     stopStream(el);
     try { updateCard(el, await api(`/api/tasks/${t.id}`)); } catch {}
+    done1();
   });
-  es.onerror = () => { stopStream(el); };
+  es.onerror = () => { stopStream(el); done1(); };
 }
 
 function stopStream(el) {

@@ -94,9 +94,16 @@ export function markFinished(db, id, { status, output, error, exitCode, finished
   return getTask(db, id);
 }
 
+// Columns returned by the list endpoint — deliberately EXCLUDES the heavy
+// `output`/`error` fields so history pages stay small. The full task (with
+// output/error) is fetched on demand via getTask when a card is opened.
+const LIST_COLS =
+  'id, prompt, engine, cwd, stream, concise, status, exit_code, created_at, started_at, finished_at';
+
 /**
  * Cursor-paginated history, newest first.
  * cursor = created_at of the last item from the previous page (exclusive).
+ * Rows omit output/error to keep the payload light.
  */
 export function listTasks(db, { cursor, limit = 20 } = {}) {
   const lim = Math.min(Math.max(Number(limit) || 20, 1), 100);
@@ -104,12 +111,12 @@ export function listTasks(db, { cursor, limit = 20 } = {}) {
   if (cursor) {
     rows = db
       .prepare(
-        `SELECT * FROM tasks WHERE created_at < ? ORDER BY created_at DESC LIMIT ?`
+        `SELECT ${LIST_COLS} FROM tasks WHERE created_at < ? ORDER BY created_at DESC LIMIT ?`
       )
       .all(Number(cursor), lim + 1);
   } else {
     rows = db
-      .prepare(`SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?`)
+      .prepare(`SELECT ${LIST_COLS} FROM tasks ORDER BY created_at DESC LIMIT ?`)
       .all(lim + 1);
   }
   const hasMore = rows.length > lim;
