@@ -10,6 +10,8 @@ const state = {
   enginePref: localStorage.getItem('onlymind_engine') || '',
   engines: [],       // full metadata from /api/engines
   engineById: {},
+  sessions: [],      // sessions for the current engine
+  currentSession: '', // '' = no session (one-off tasks)
 
   nextCursor: null,
   loading: false,
@@ -264,6 +266,78 @@ async function saveKey(provider, key, msgEl) {
   }
 }
 
+// ---- Sessions -------------------------------------------------------------
+async function loadSessions() {
+  const engine = $('engine').value;
+  try {
+    const { sessions } = await api(`/api/sessions?engine=${encodeURIComponent(engine)}`);
+    state.sessions = sessions;
+    const opts = ['<option value="">(不使用会话 · 一次性任务)</option>']
+      .concat(sessions.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`))
+      .concat(['<option value="__new__">＋ 新建会话…</option>']);
+    $('session').innerHTML = opts.join('');
+    if (state.currentSession && state.sessions.some((s) => s.id === state.currentSession)) {
+      $('session').value = state.currentSession;
+    } else {
+      state.currentSession = '';
+      $('session').value = '';
+    }
+    renderSessionBar();
+  } catch { /* ignore */ }
+}
+
+function renderSessionBar() {
+  $('sessionBar').classList.toggle('hidden', !state.currentSession);
+  $('sessMsg').textContent = '';
+}
+
+async function onSessionChange() {
+  const v = $('session').value;
+  if (v === '__new__') {
+    const name = (window.prompt('新会话名称:') || '').trim();
+    if (!name) { $('session').value = state.currentSession; return; }
+    try {
+      const s = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ name, engine: $('engine').value }) });
+      state.currentSession = s.id;
+      await loadSessions();
+      await loadMore(true);
+    } catch (e) { alert(e.message); $('session').value = state.currentSession; }
+    return;
+  }
+  state.currentSession = v;
+  renderSessionBar();
+  await loadMore(true); // history now shows this session (or all)
+}
+
+async function renameSession() {
+  if (!state.currentSession) return;
+  const cur = state.sessions.find((s) => s.id === state.currentSession);
+  const name = (window.prompt('重命名会话:', cur?.name || '') || '').trim();
+  if (!name) return;
+  try { await api(`/api/sessions/${state.currentSession}`, { method: 'PATCH', body: JSON.stringify({ name }) }); await loadSessions(); }
+  catch (e) { alert(e.message); }
+}
+
+async function deleteSession() {
+  if (!state.currentSession) return;
+  if (!window.confirm('删除该会话及其全部任务?不可恢复。')) return;
+  try {
+    await api(`/api/sessions/${state.currentSession}`, { method: 'DELETE' });
+    state.currentSession = '';
+    await loadSessions();
+    await loadMore(true);
+  } catch (e) { alert(e.message); }
+}
+
+async function compressSession() {
+  if (!state.currentSession) return;
+  $('sessMsg').textContent = '压缩中…';
+  try {
+    const r = await api(`/api/sessions/${state.currentSession}/compress`, { method: 'POST' });
+    $('sessMsg').textContent = '已压缩 ✓(已把历史总结为摘要,后续更省上下文)';
+  } catch (e) { $('sessMsg').textContent = e.message; }
+}
+
 async function loadMore(reset = false) {
   if (state.loading) return;
   state.loading = true;
@@ -275,8 +349,9 @@ async function loadMore(reset = false) {
       state.cards.clear();
       $('list').innerHTML = '';
     }
+    const base = state.currentSession ? `/api/sessions/${state.currentSession}/tasks` : '/api/tasks';
     const q = state.nextCursor ? `?cursor=${state.nextCursor}&limit=20` : '?limit=20';
-    const { items, nextCursor } = await api('/api/tasks' + q);
+    const { items, nextCursor } = await api(base + q);
     for (const t of items) {
       const el = createCard(t);
       $('list').appendChild(el);
@@ -327,11 +402,20 @@ $('concise').addEventListener('change', () => {
   localStorage.setItem('onlymind_concise', state.concisePref ? '1' : '0');
 });
 
-$('engine').addEventListener('change', () => {
+$('engine').addEventListener('change', async () => {
   state.enginePref = $('engine').value;
   localStorage.setItem('onlymind_engine', state.enginePref);
   refreshEngineKeyUI();
+  // Sessions are per-engine: reset selection and reload for the new engine.
+  state.currentSession = '';
+  await loadSessions();
+  await loadMore(true);
 });
+
+$('session').addEventListener('change', onSessionChange);
+$('sessRename').addEventListener('click', renameSession);
+$('sessDelete').addEventListener('click', deleteSession);
+$('sessCompress').addEventListener('click', compressSession);
 
 // Inline "enter key for this engine" (shown under the engine dropdown).
 $('apiKeySave').addEventListener('click', async () => {
@@ -370,6 +454,7 @@ $('submit').addEventListener('click', async () => {
         cwd: $('cwd').value.trim() || undefined,
         stream: state.streamPref,
         concise: state.concisePref,
+        session_id: state.currentSession || undefined,
       }),
     });
     $('prompt').value = '';
@@ -398,6 +483,7 @@ async function init() {
     await api('/api/health');
     $('connStatus').textContent = '已连接 ✓';
     await loadEngines();
+    await loadSessions();
     loadVersion();
     await loadMore(true);
   } catch (e) {

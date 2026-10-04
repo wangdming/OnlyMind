@@ -53,6 +53,15 @@
       <button id="apiKeySave">验证并保存</button>
       <p id="apiKeyMsg" class="muted"></p>
     </div>
+    <label>会话(多轮续接)
+      <select id="session"></select>
+    </label>
+    <div id="sessionBar" class="actions hidden">
+      <button id="sessRename">重命名</button>
+      <button id="sessCompress">压缩</button>
+      <button id="sessDelete" class="cancel">删除</button>
+      <span id="sessMsg" class="muted"></span>
+    </div>
     <label>工作目录(可选)
       <input id="cwd" type="text" placeholder="默认用服务端 HOME,例如 /Users/you/projects/foo" />
     </label>
