@@ -7,8 +7,12 @@ import {
 import { createQueue } from '../src/queue.js';
 import { buildServer } from '../src/server.js';
 import { ENGINES } from '../src/engines.js';
-import { spawnRunner, claudeSessionArgs, cliTranscript } from '../src/runner.js';
+import { spawnRunner, claudeSessionArgs, cliTranscript, buildClaudeMcpConfig } from '../src/runner.js';
 import { assembleContext } from '../src/providers.js';
+import { buildCodexMcpToml, syncCodexConfig, MARK_START, MARK_END } from '../src/codexmcp.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const TOKEN = 'test-token';
 
@@ -398,6 +402,81 @@ test('compress: 404 unknown / 400 for CLI engine / 400 without key', async () =>
   assert.equal((await app.inject({ method: 'POST', url: `/api/sessions/${cli.id}/compress`, headers: auth() })).statusCode, 400);
   const api = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'a', engine: 'openai' } })).json();
   assert.equal((await app.inject({ method: 'POST', url: `/api/sessions/${api.id}/compress`, headers: auth() })).statusCode, 400);
+});
+
+// --- MCP ------------------------------------------------------------------
+
+test('buildClaudeMcpConfig builds http servers with custom headers', () => {
+  const cfg = buildClaudeMcpConfig([{ name: 'sellerspace', url: 'https://x/mcp/', header_name: 'x-api-key', header_value: 'k' }]);
+  assert.deepEqual(cfg, { mcpServers: { sellerspace: { type: 'http', url: 'https://x/mcp/', headers: { 'x-api-key': 'k' } } } });
+  assert.deepEqual(buildClaudeMcpConfig([]), { mcpServers: {} });
+});
+
+test('MCP servers CRUD + header masking (raw value never returned)', async () => {
+  const { app } = makeApp();
+  assert.equal((await app.inject({ method: 'POST', url: '/api/mcp', headers: auth(), payload: { name: 'ss', url: 'https://www.sellerspace.com/mcp/', header_name: 'x-api-key', header_value: 'demo_aurelia_2026' } })).statusCode, 201);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/mcp', headers: auth(), payload: { name: 'x', url: 'ftp://bad', header_name: 'h', header_value: 'v' } })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/mcp', headers: auth(), payload: { name: 'x' } })).statusCode, 400);
+  const list = (await app.inject({ method: 'GET', url: '/api/mcp', headers: auth() })).json().servers;
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, 'ss');
+  assert.equal(list[0].header_name, 'x-api-key');
+  assert.ok(!('header_value' in list[0]), 'raw header value must NOT be returned');
+  assert.ok(list[0].header_masked.includes('…'));
+  assert.equal((await app.inject({ method: 'DELETE', url: '/api/mcp/ss', headers: auth() })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'DELETE', url: '/api/mcp/ss', headers: auth() })).statusCode, 404);
+});
+
+test('buildCodexMcpToml emits http_headers with custom header', () => {
+  const toml = buildCodexMcpToml([{ name: 'sellerspace', url: 'https://x/mcp/', header_name: 'x-api-key', header_value: 'k' }]);
+  assert.ok(toml.includes(MARK_START) && toml.includes(MARK_END));
+  assert.ok(toml.includes('[mcp_servers."sellerspace"]'));
+  assert.ok(toml.includes('url = "https://x/mcp/"'));
+  assert.ok(toml.includes('http_headers = { "x-api-key" = "k" }'));
+  assert.equal(buildCodexMcpToml([]), '');
+});
+
+test('syncCodexConfig merges/replaces/removes managed block, preserving other content', () => {
+  const p = path.join(os.tmpdir(), `onlymind-codex-${Date.now()}-${Math.floor(Math.random() * 1e6)}.toml`);
+  fs.writeFileSync(p, '[model]\nname = "gpt"\n');
+  syncCodexConfig(p, [{ name: 'ss', url: 'https://a/mcp/', header_name: 'x-api-key', header_value: 'k1' }]);
+  let c = fs.readFileSync(p, 'utf8');
+  assert.ok(c.includes('name = "gpt"'), 'preserves existing content');
+  assert.ok(c.includes('[mcp_servers."ss"]') && c.includes('k1'));
+  // re-sync with different server → old block replaced, no duplicate markers
+  syncCodexConfig(p, [{ name: 'sp', url: 'https://b/mcp', header_name: 'secret-key', header_value: 'k2' }]);
+  c = fs.readFileSync(p, 'utf8');
+  assert.ok(c.includes('name = "gpt"'));
+  assert.ok(c.includes('[mcp_servers."sp"]') && c.includes('k2'));
+  assert.ok(!c.includes('[mcp_servers."ss"]'), 'old block removed');
+  assert.equal(c.match(new RegExp(MARK_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')).length, 1, 'single managed block');
+  // clear
+  syncCodexConfig(p, []);
+  c = fs.readFileSync(p, 'utf8');
+  assert.ok(c.includes('name = "gpt"') && !c.includes('mcp_servers'), 'block removed, content kept');
+  fs.rmSync(p, { force: true });
+});
+
+test('POST /api/mcp/codex-apply writes config.toml', async () => {
+  const db = openDb(':memory:');
+  const queue = fakeQueue();
+  const p = path.join(os.tmpdir(), `onlymind-codex-ep-${Date.now()}-${Math.floor(Math.random() * 1e6)}.toml`);
+  const app = buildServer({ db, queue, token: TOKEN, codexConfigPath: p });
+  await app.inject({ method: 'POST', url: '/api/mcp', headers: auth(), payload: { name: 'ss', url: 'https://www.sellerspace.com/mcp/', header_name: 'x-api-key', header_value: 'demo_aurelia_2026' } });
+  const r = await app.inject({ method: 'POST', url: '/api/mcp/codex-apply', headers: auth() });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.json().count, 1);
+  const c = fs.readFileSync(p, 'utf8');
+  assert.ok(c.includes('[mcp_servers."ss"]') && c.includes('demo_aurelia_2026'));
+  fs.rmSync(p, { force: true });
+});
+
+test('task accepts mcp flag', async () => {
+  const { app } = makeApp();
+  const t = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'x', mcp: true } })).json();
+  assert.equal(t.mcp, 1);
+  const t2 = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'y' } })).json();
+  assert.equal(t2.mcp, 0);
 });
 
 test('GET /api/version returns current and no update when repoSlug unset', async () => {

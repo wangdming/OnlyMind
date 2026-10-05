@@ -51,6 +51,7 @@ https://xxxx-xxxx-xxxx.trycloudflare.com
    - **工作目录**(可选):任务要操作的目录;留空用服务端默认目录。
    - **简洁回答**:默认已勾选 → 只给最终结果;想要完整解释/代码就**取消勾选**。
    - **实时流式输出**(可选):勾选可边跑边看。
+   - **启用 MCP**(可选,仅 Claude 引擎):先在右上角 ⚙︎ 设置里「MCP 服务器」中添加(可一键「填充优麦云 / 卖家精灵」,再填你的 key;演示可用优麦云 `demo_aurelia_2026`)。勾选后,Claude 任务即可通过 MCP 查询/操作这些外部服务(如亚马逊经营、广告、关键词数据)。
    - 点「发送任务」。
 6. 「历史任务」里自动刷新状态(`queued → running → done/failed`),点卡片看输出;可**取消**(运行中)、**重跑**(已结束)、底部「加载更多」翻页。
 
@@ -70,6 +71,34 @@ npm run check:update   # 看有没有新版本
 npm run update         # 更新(git 克隆→git pull;zip 下载→自动拉最新 Release)
 ```
 更新**保留** `data/`(历史任务)与 `.env`(配置)。更新后请重启正在运行的 OnlyMind。
+
+## MCP:连接优麦云 / 卖家精灵(Claude 与 Codex)
+
+MCP 让 AI 引擎调用外部工具/数据:**优麦云**(你的店铺经营 + 广告操作)、**卖家精灵**(市场/关键词研究)。两者用自定义鉴权头(优麦云 `x-api-key`、卖家精灵 `secret-key`)。
+
+- **Claude 引擎**:OnlyMind 已内置、图形化配置 → **推荐**。
+- **Codex 引擎**:在 Codex 自己的配置里加(见 B)。
+- **API 引擎(OpenAI/Anthropic)**:暂不支持这两个服务,请用 Claude 或 Codex。
+
+### A. Claude(OnlyMind 内置 · 推荐)
+1. 右上角 ⚙︎ → 找到「MCP 服务器」。
+2. 点「**填充优麦云**」或「**填充卖家精灵**」自动带出 名称 / URL / 鉴权头名;在「鉴权头值」填你的 key(体验可用优麦云演示 key `demo_aurelia_2026`)。
+3. 点「**保存 MCP 服务器**」(列表会显示,key 以遮蔽形式展示)。可添加多个。
+4. 回主界面:**引擎选 Claude Code**,勾选「**启用 MCP**」。
+5. 发任务,例如:「用 sellerspace 查我店铺最近 7 天的广告花费」。Claude 会自动调用对应 MCP 工具。
+> 勾选「启用 MCP」后,本次 Claude 任务会接入**所有已配置**的 MCP;key 存电脑端,列表只显示遮蔽值。
+
+### B. Codex(OnlyMind 一键写入 Codex 配置)
+OnlyMind 能把已配置的 MCP **自动写入 Codex 配置**,无需手改 TOML:
+1. 先按 A 的第 1–3 步,在「MCP 服务器」里添加好优麦云 / 卖家精灵(填好 key)。
+2. 在「MCP 服务器」区点「**写入 Codex 配置**」。OnlyMind 会把这些服务器写入 `~/.codex/config.toml` 的一个**受管理标记块**(保留你其它配置;可随时点「**从 Codex 移除**」撤销)。
+3. 确保电脑已**安装并登录 Codex**(`codex` 命令可用、已完成 OpenAI 登录)。
+4. 回主界面,引擎选 **Codex**,发任务即可调用这些 MCP 工具。
+> 配置采用 Codex 的 `http_headers` 格式,支持 `x-api-key` / `secret-key` 等自定义鉴权头。
+
+### 获取正式 key 与官方教程
+- 优麦云:后台 `/web/mcp/settings` 生成 `x-api-key`;配置页 https://www.sellerspace.com/web/mcp/setup
+- 卖家精灵:`open.sellersprite.com` 获取 `secret-key`;MCP 文档 https://open.sellersprite.com/mcp/43
 
 ## 安全要点(临时隧道)
 

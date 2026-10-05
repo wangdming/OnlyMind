@@ -1,6 +1,18 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ENGINES } from './engines.js';
 import { complete } from './providers.js';
+
+// Build a Claude Code --mcp-config JSON from stored MCP servers (pure, testable).
+export function buildClaudeMcpConfig(servers) {
+  const mcpServers = {};
+  for (const s of servers || []) {
+    mcpServers[s.name] = { type: 'http', url: s.url, headers: { [s.header_name]: s.header_value } };
+  }
+  return { mcpServers };
+}
 
 // Extra claude CLI args for session continuity (pure, testable).
 // First turn of a session creates the id; later turns resume it.
@@ -48,7 +60,7 @@ function killChild(child) {
  * @returns {(task:object, opts?:{signal?:AbortSignal, onData?:(text:string)=>void}) =>
  *   Promise<{status:'done'|'failed'|'canceled', output:string|null, error:string|null, exitCode:number|null}>}
  */
-export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null, models = {}, getSessionContext = () => ({ summary: null, turns: [] }) }) {
+export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null, models = {}, getSessionContext = () => ({ summary: null, turns: [] }), getMcpServers = () => [] }) {
   return function run(task, { signal, onData } = {}) {
     const engine = ENGINES[task.engine];
     if (!engine) {
@@ -82,6 +94,18 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
       if (task.session_id) {
         if (engine.bin === 'claude') args = args.concat(claudeSessionArgs(task.session_id, ctx));
       }
+      // MCP injection (claude only; codex configured in its own config).
+      let mcpConfigFile = null;
+      if (task.mcp && engine.bin === 'claude') {
+        const servers = getMcpServers() || [];
+        if (servers.length) {
+          try {
+            mcpConfigFile = path.join(os.tmpdir(), `onlymind-mcp-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+            fs.writeFileSync(mcpConfigFile, JSON.stringify(buildClaudeMcpConfig(servers)));
+            args = args.concat(['--mcp-config', mcpConfigFile, '--strict-mcp-config']);
+          } catch { mcpConfigFile = null; }
+        }
+      }
       const cwd = task.cwd || defaultCwd;
       // On Windows, npm-installed CLIs are `.cmd` shims that Node (>=18.20) can
       // only launch with shell:true. The prompt goes via stdin (below), so only
@@ -98,6 +122,7 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
           windowsHide: true,
         });
       } catch (err) {
+        if (mcpConfigFile) { try { fs.unlinkSync(mcpConfigFile); } catch { /* ignore */ } }
         resolve({ status: 'failed', output: null, error: `Failed to spawn ${engine.bin}: ${err.message}`, exitCode: null });
         return;
       }
@@ -153,6 +178,7 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
       function cleanup() {
         clearTimeout(timer);
         if (signal) signal.removeEventListener('abort', onAbort);
+        if (mcpConfigFile) { try { fs.unlinkSync(mcpConfigFile); } catch { /* ignore */ } }
       }
 
       child.on('error', (err) => {

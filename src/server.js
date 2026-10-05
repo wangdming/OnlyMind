@@ -5,9 +5,11 @@ import {
   insertTask, getTask, listTasks, setSetting,
   createSession, getSession, listSessions, renameSession, deleteSession, touchSession,
   sessionHistory, setSessionSummary,
+  listMcpServers, setMcpServer, deleteMcpServer,
 } from './db.js';
 import { isValidEngine, engineList, ENGINES } from './engines.js';
 import { validateKey, complete } from './providers.js';
+import { syncCodexConfig } from './codexmcp.js';
 import { taskBus } from './events.js';
 
 /**
@@ -29,7 +31,7 @@ function cmpVer(a, b) {
   return 0;
 }
 
-export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, getApiKey = () => null, models = {}, now = () => Date.now() }) {
+export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, getApiKey = () => null, models = {}, codexConfigPath = null, now = () => Date.now() }) {
   const app = Fastify({ logger: false });
 
   // --- Auth: every /api route requires a valid token ----------------------
@@ -100,6 +102,44 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     return { ok: true };
   });
 
+  // --- MCP servers (for CLI engines to connect external tools) ------------
+  const maskVal = (v) => (v && v.length > 6 ? v.slice(0, 3) + '…' + v.slice(-2) : '••••');
+  app.get('/api/mcp', async () => ({
+    servers: listMcpServers(db).map((s) => ({ name: s.name, url: s.url, header_name: s.header_name, header_masked: maskVal(s.header_value) })),
+  }));
+  app.post('/api/mcp', async (req, reply) => {
+    const b = req.body || {};
+    const name = typeof b.name === 'string' ? b.name.trim() : '';
+    const url = typeof b.url === 'string' ? b.url.trim() : '';
+    const header_name = typeof b.header_name === 'string' ? b.header_name.trim() : '';
+    const header_value = typeof b.header_value === 'string' ? b.header_value.trim() : '';
+    if (!name || !url || !header_name || !header_value) return reply.code(400).send({ error: 'name/url/header_name/header_value 均为必填' });
+    if (!/^https?:\/\//.test(url)) return reply.code(400).send({ error: 'url 必须以 http(s):// 开头' });
+    setMcpServer(db, { name, url, header_name, header_value, now: now() });
+    return reply.code(201).send({ ok: true });
+  });
+  app.delete('/api/mcp/:name', async (req, reply) => {
+    const ok = deleteMcpServer(db, req.params.name);
+    if (!ok) return reply.code(404).send({ error: 'not found' });
+    return { ok: true };
+  });
+
+  // Write all configured MCP servers into Codex's config.toml (one-click auto-config).
+  app.post('/api/mcp/codex-apply', async (req, reply) => {
+    if (!codexConfigPath) return reply.code(500).send({ error: 'codex 配置路径未知' });
+    try {
+      const servers = listMcpServers(db);
+      const r = syncCodexConfig(codexConfigPath, servers);
+      return { ok: true, path: r.path, count: r.count };
+    } catch (e) { return reply.code(500).send({ error: '写入 Codex 配置失败:' + e.message }); }
+  });
+  // Remove the OnlyMind-managed block from Codex's config.toml.
+  app.post('/api/mcp/codex-clear', async (req, reply) => {
+    if (!codexConfigPath) return reply.code(500).send({ error: 'codex 配置路径未知' });
+    try { const r = syncCodexConfig(codexConfigPath, []); return { ok: true, path: r.path }; }
+    catch (e) { return reply.code(500).send({ error: '清除失败:' + e.message }); }
+  });
+
   app.post('/api/tasks', async (req, reply) => {
     const body = req.body || {};
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
@@ -110,6 +150,7 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     const concise = body.concise !== false && body.concise !== 0 && body.concise !== '0';
 
     const sessionId = typeof body.session_id === 'string' && body.session_id ? body.session_id : null;
+    const mcp = body.mcp === true || body.mcp === 1 || body.mcp === '1';
 
     if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
     if (!isValidEngine(engine)) return reply.code(400).send({ error: `unknown engine: ${engine}` });
@@ -123,7 +164,7 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
       if (s.engine !== engine) return reply.code(400).send({ error: `会话绑定引擎 ${s.engine},与任务引擎 ${engine} 不一致` });
     }
 
-    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd, stream, concise, session_id: sessionId, created_at: now() });
+    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd, stream, concise, session_id: sessionId, mcp, created_at: now() });
     if (sessionId) touchSession(db, sessionId, now());
     queue.enqueue(task.id);
     return reply.code(201).send(task);

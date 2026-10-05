@@ -1,9 +1,10 @@
 import { config } from './config.js';
-import { openDb, getSetting, getSession, sessionHistory } from './db.js';
+import { openDb, getSetting, getSession, sessionHistory, listMcpServers } from './db.js';
 import { createQueue } from './queue.js';
 import { spawnRunner } from './runner.js';
 import { buildServer } from './server.js';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, homedir } from 'node:os';
+import path from 'node:path';
 
 function localIps() {
   const nets = networkInterfaces();
@@ -31,9 +32,14 @@ async function main() {
     return { summary: s.summary || null, turns: all.slice(s.turns_before_summary || 0) };
   };
 
-  const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs, getApiKey, models, getSessionContext });
+  const getMcpServers = () => listMcpServers(db);
+
+  const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs, getApiKey, models, getSessionContext, getMcpServers });
   const queue = createQueue({ db, run });
-  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug, getApiKey, models });
+  // Codex reads MCP config from $CODEX_HOME/config.toml (default ~/.codex).
+  const codexConfigPath = path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml');
+
+  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug, getApiKey, models, codexConfigPath });
 
   await app.listen({ host: config.host, port: config.port });
 

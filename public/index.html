@@ -34,6 +34,26 @@
       <button class="keysave" data-provider="anthropic">验证并保存</button>
       <p id="keyMsg" class="muted"></p>
     </div>
+
+    <div id="mcpBox">
+      <h3 class="sub">MCP 服务器(供 Claude 引擎调用外部工具)</h3>
+      <div id="mcpList" class="muted"></div>
+      <div class="actions">
+        <button id="mcpFillYmy" type="button">填充优麦云</button>
+        <button id="mcpFillMjjl" type="button">填充卖家精灵</button>
+      </div>
+      <label>名称 <input id="mcp-name" type="text" placeholder="如 sellerspace" /></label>
+      <label>MCP URL <input id="mcp-url" type="text" placeholder="https://.../mcp/" /></label>
+      <label>鉴权头名 <input id="mcp-hname" type="text" placeholder="x-api-key 或 secret-key" /></label>
+      <label>鉴权头值 <input id="mcp-hval" type="password" placeholder="你的 key(演示:demo_aurelia_2026)" autocomplete="off" /></label>
+      <button id="mcpAdd">保存 MCP 服务器</button>
+      <p id="mcpMsg" class="muted"></p>
+      <div class="actions">
+        <button id="mcpCodexApply" type="button">写入 Codex 配置</button>
+        <button id="mcpCodexClear" type="button" class="cancel">从 Codex 移除</button>
+      </div>
+      <p id="mcpCodexMsg" class="muted">Claude 引擎开箱即用;Codex 引擎需点「写入 Codex 配置」(写入 ~/.codex/config.toml,需已装并登录 Codex)。</p>
+    </div>
   </section>
 
   <!-- New task -->
@@ -72,6 +92,10 @@
     <label class="checkbox">
       <input id="stream" type="checkbox" />
       <span>实时流式输出(默认关闭;开启后可边跑边看)</span>
+    </label>
+    <label class="checkbox">
+      <input id="mcp" type="checkbox" />
+      <span>启用 MCP(让 Claude 调用已配置的外部工具,如优麦云/卖家精灵)</span>
     </label>
     <button id="submit" class="primary">发送任务</button>
     <p id="submitMsg" class="muted"></p>

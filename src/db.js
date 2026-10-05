@@ -35,6 +35,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at           INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  name         TEXT PRIMARY KEY,
+  url          TEXT NOT NULL,
+  header_name  TEXT NOT NULL,
+  header_value TEXT NOT NULL,
+  created_at   INTEGER NOT NULL
+);
 `;
 
 // Lightweight migrations for databases created by an earlier version.
@@ -48,6 +56,9 @@ function migrate(db) {
   }
   if (!cols.includes('session_id')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN session_id TEXT`);
+  }
+  if (!cols.includes('mcp')) {
+    db.exec(`ALTER TABLE tasks ADD COLUMN mcp INTEGER NOT NULL DEFAULT 0`);
   }
 }
 
@@ -68,11 +79,11 @@ export function openDb(dbPath) {
 
 export function insertTask(db, task) {
   db.prepare(
-    `INSERT INTO tasks (id, prompt, engine, cwd, stream, concise, session_id, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
+    `INSERT INTO tasks (id, prompt, engine, cwd, stream, concise, session_id, mcp, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
   ).run(
     task.id, task.prompt, task.engine, task.cwd ?? null,
-    task.stream ? 1 : 0, task.concise ? 1 : 0, task.session_id ?? null, task.created_at
+    task.stream ? 1 : 0, task.concise ? 1 : 0, task.session_id ?? null, task.mcp ? 1 : 0, task.created_at
   );
   return getTask(db, task.id);
 }
@@ -194,6 +205,22 @@ export function deleteSession(db, id) {
   db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   return n;
 }
+// --- MCP servers -----------------------------------------------------------
+export function listMcpServers(db) {
+  return db.prepare('SELECT * FROM mcp_servers ORDER BY created_at ASC').all();
+}
+export function setMcpServer(db, { name, url, header_name, header_value, now }) {
+  db.prepare(
+    `INSERT INTO mcp_servers (name, url, header_name, header_value, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET url=excluded.url, header_name=excluded.header_name, header_value=excluded.header_value`
+  ).run(name, url, header_name, header_value, now);
+}
+export function deleteMcpServer(db, name) {
+  const r = db.prepare('DELETE FROM mcp_servers WHERE name = ?').run(name);
+  return r.changes > 0;
+}
+
 /** Finished tasks in a session, oldest first (for building conversation history). */
 export function sessionHistory(db, id) {
   return db.prepare(

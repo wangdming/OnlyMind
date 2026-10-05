@@ -7,6 +7,7 @@ const state = {
   token: localStorage.getItem('onlymind_token') || '',
   streamPref: localStorage.getItem('onlymind_stream') === '1',
   concisePref: localStorage.getItem('onlymind_concise') !== '0', // default ON
+  mcpPref: localStorage.getItem('onlymind_mcp') === '1', // default OFF
   enginePref: localStorage.getItem('onlymind_engine') || '',
   engines: [],       // full metadata from /api/engines
   engineById: {},
@@ -266,6 +267,42 @@ async function saveKey(provider, key, msgEl) {
   }
 }
 
+// ---- MCP servers ----------------------------------------------------------
+async function loadMcp() {
+  try {
+    const { servers } = await api('/api/mcp');
+    if (!servers.length) { $('mcpList').textContent = '(未配置 MCP 服务器)'; return; }
+    $('mcpList').innerHTML = servers.map((s) =>
+      `<div class="mcprow"><span>${escapeHtml(s.name)} · ${escapeHtml(s.header_name)}:${escapeHtml(s.header_masked)}</span>` +
+      `<button class="cancel" data-mcp="${escapeHtml(s.name)}">删除</button></div>`).join('');
+    for (const b of document.querySelectorAll('[data-mcp]')) {
+      b.addEventListener('click', () => deleteMcp(b.dataset.mcp));
+    }
+  } catch { /* ignore */ }
+}
+async function addMcp() {
+  const body = {
+    name: $('mcp-name').value.trim(), url: $('mcp-url').value.trim(),
+    header_name: $('mcp-hname').value.trim(), header_value: $('mcp-hval').value.trim(),
+  };
+  $('mcpMsg').textContent = '保存中…';
+  try {
+    await api('/api/mcp', { method: 'POST', body: JSON.stringify(body) });
+    $('mcpMsg').textContent = '已保存 ✓';
+    $('mcp-hval').value = '';
+    await loadMcp();
+  } catch (e) { $('mcpMsg').textContent = e.message; }
+}
+async function deleteMcp(name) {
+  if (!window.confirm(`删除 MCP 服务器 ${name}?`)) return;
+  try { await api(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' }); await loadMcp(); }
+  catch (e) { alert(e.message); }
+}
+function fillMcp(name, url, header) {
+  $('mcp-name').value = name; $('mcp-url').value = url; $('mcp-hname').value = header;
+  $('mcp-hval').focus();
+}
+
 // ---- Sessions -------------------------------------------------------------
 async function loadSessions() {
   const engine = $('engine').value;
@@ -402,6 +439,24 @@ $('concise').addEventListener('change', () => {
   localStorage.setItem('onlymind_concise', state.concisePref ? '1' : '0');
 });
 
+$('mcp').addEventListener('change', () => {
+  state.mcpPref = $('mcp').checked;
+  localStorage.setItem('onlymind_mcp', state.mcpPref ? '1' : '0');
+});
+
+$('mcpAdd').addEventListener('click', addMcp);
+$('mcpFillYmy').addEventListener('click', () => fillMcp('sellerspace', 'https://www.sellerspace.com/mcp/', 'x-api-key'));
+$('mcpFillMjjl').addEventListener('click', () => fillMcp('sellersprite', 'https://mcp.sellersprite.com/mcp', 'secret-key'));
+$('mcpCodexApply').addEventListener('click', async () => {
+  $('mcpCodexMsg').textContent = '写入中…';
+  try { const r = await api('/api/mcp/codex-apply', { method: 'POST' }); $('mcpCodexMsg').textContent = `已写入 Codex 配置(${r.count} 个服务器):${r.path}`; }
+  catch (e) { $('mcpCodexMsg').textContent = e.message; }
+});
+$('mcpCodexClear').addEventListener('click', async () => {
+  try { await api('/api/mcp/codex-clear', { method: 'POST' }); $('mcpCodexMsg').textContent = '已从 Codex 配置移除 OnlyMind 托管的 MCP 块。'; }
+  catch (e) { $('mcpCodexMsg').textContent = e.message; }
+});
+
 $('engine').addEventListener('change', async () => {
   state.enginePref = $('engine').value;
   localStorage.setItem('onlymind_engine', state.enginePref);
@@ -454,6 +509,7 @@ $('submit').addEventListener('click', async () => {
         cwd: $('cwd').value.trim() || undefined,
         stream: state.streamPref,
         concise: state.concisePref,
+        mcp: state.mcpPref,
         session_id: state.currentSession || undefined,
       }),
     });
@@ -474,6 +530,7 @@ async function init() {
   $('token').value = state.token;
   $('stream').checked = state.streamPref;
   $('concise').checked = state.concisePref;
+  $('mcp').checked = state.mcpPref;
   if (!state.token) {
     $('settings').classList.remove('hidden');
     $('connStatus').textContent = '未设置令牌';
@@ -484,6 +541,7 @@ async function init() {
     $('connStatus').textContent = '已连接 ✓';
     await loadEngines();
     await loadSessions();
+    loadMcp();
     loadVersion();
     await loadMore(true);
   } catch (e) {

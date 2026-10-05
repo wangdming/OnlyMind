@@ -91,6 +91,23 @@
 
 ---
 
+## MCP 服务器(外部工具接入)
+
+让 **Claude 引擎**在执行任务时通过 MCP 连接外部服务(如优麦云 `x-api-key`、卖家精灵 `secret-key`)。
+
+- `GET  /api/mcp` 列出已配置服务器(**header 值遮蔽**,不返回原值)。
+- `POST /api/mcp {name, url, header_name, header_value}` 新增/更新(url 需 http(s)://)。
+- `DELETE /api/mcp/:name` 删除。
+- `POST /api/mcp/codex-apply` 把当前所有 MCP 服务器写入 Codex 的 `config.toml`(`$CODEX_HOME`/`~/.codex`,受管理标记块)→ `{ ok, path, count }`。
+- `POST /api/mcp/codex-clear` 移除该托管块 → `{ ok, path }`。
+
+任务提交时传 `mcp: true`:
+- 引擎 `claude`:OnlyMind 以 `--mcp-config`(临时文件 + `--strict-mcp-config`,用后删除)注入该次 `claude -p`。
+- 引擎 `codex`:先调用 `codex-apply` 写入 Codex 配置(一次即可),之后 codex 任务自动可用。
+> 适配范围:claude ✅(已实测);codex ✅ 一键写入其 `http_headers`(本机无 Codex 未实测连接);API 引擎受连接器鉴权限制(Anthropic 仅 Bearer,不支持自定义头),暂不支持这两个服务。
+
+---
+
 ## POST /api/tasks
 
 提交一个任务,立即入队并返回(异步执行)。
@@ -103,6 +120,7 @@
 | `cwd` | string | 否 | 工作目录;省略则用服务端默认(仅 CLI 引擎有效) |
 | `stream` | boolean | 否 | 是否流式(默认 `false`)。为 `true` 时引擎以 stream-json 运行,可通过 SSE 实时查看 |
 | `session_id` | string | 否 | 归属的会话 id;会校验会话存在且引擎一致,并启用多轮续接 |
+| `mcp` | boolean | 否 | 为 `true` 且引擎为 claude 时,注入已配置的 MCP 服务器供任务调用 |
 
 ```json
 { "prompt": "总结该目录下的 README", "engine": "claude", "cwd": "~/code/foo", "stream": false }
