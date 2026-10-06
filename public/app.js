@@ -326,6 +326,8 @@ async function loadSessions() {
 function renderSessionBar() {
   $('sessionBar').classList.toggle('hidden', !state.currentSession);
   $('sessMsg').textContent = '';
+  const cur = state.sessions.find((s) => s.id === state.currentSession);
+  $('sessNoSync').checked = !!(cur && cur.sync_ignored);
 }
 
 async function onSessionChange() {
@@ -471,6 +473,16 @@ $('session').addEventListener('change', onSessionChange);
 $('sessRename').addEventListener('click', renameSession);
 $('sessDelete').addEventListener('click', deleteSession);
 $('sessCompress').addEventListener('click', compressSession);
+$('sessNoSync').addEventListener('change', async () => {
+  if (!state.currentSession) return;
+  const ignored = $('sessNoSync').checked;
+  try {
+    await api(`/api/sessions/${state.currentSession}/sync-ignore`, { method: 'POST', body: JSON.stringify({ ignored }) });
+    const cur = state.sessions.find((s) => s.id === state.currentSession);
+    if (cur) cur.sync_ignored = ignored ? 1 : 0;
+    $('sessMsg').textContent = ignored ? '已标记为不同步' : '已恢复同步';
+  } catch (e) { $('sessMsg').textContent = e.message; $('sessNoSync').checked = !ignored; }
+});
 
 // Inline "enter key for this engine" (shown under the engine dropdown).
 $('apiKeySave').addEventListener('click', async () => {

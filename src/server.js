@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
   insertTask, getTask, listTasks, setSetting,
   createSession, getSession, listSessions, renameSession, deleteSession, touchSession,
-  sessionHistory, setSessionSummary,
+  sessionHistory, setSessionSummary, setSyncIgnored,
   listMcpServers, setMcpServer, deleteMcpServer,
 } from './db.js';
 import { isValidEngine, engineList, ENGINES } from './engines.js';
@@ -205,6 +205,14 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     if (!s) return reply.code(404).send({ error: 'not found' });
     const removed = deleteSession(db, req.params.id);
     return { ok: true, removedTasks: removed };
+  });
+
+  // Mark a session as "don't sync to local AI" (or restore). Used by the phone UI.
+  app.post('/api/sessions/:id/sync-ignore', async (req, reply) => {
+    const s = getSession(db, req.params.id);
+    if (!s) return reply.code(404).send({ error: 'not found' });
+    const ignored = req.body?.ignored !== false;
+    return setSyncIgnored(db, req.params.id, ignored);
   });
 
   app.get('/api/sessions/:id/tasks', async (req, reply) => {

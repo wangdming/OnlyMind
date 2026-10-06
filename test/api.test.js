@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import {
   openDb, insertTask, listTasks, getTask, markFinished,
   createSession, getSession, sessionHistory, setSessionSummary, sessionTasksFull, searchTasks,
+  sessionsNeedingSync, setSyncIgnored,
 } from '../src/db.js';
-import { buildTranscript, formatSessionList, formatSearch, runTool } from '../scripts/mcp-server.mjs';
+import { buildTranscript, formatSessionList, formatSearch, runTool, getPrompt } from '../scripts/mcp-server.mjs';
 import { createQueue } from '../src/queue.js';
 import { buildServer } from '../src/server.js';
 import { ENGINES } from '../src/engines.js';
@@ -532,6 +533,46 @@ test('runTool: list/transcript/search + errors', () => {
 test('formatters handle empty input', () => {
   assert.equal(formatSessionList([]), '(当前没有会话)');
   assert.equal(formatSearch([]), '(没有匹配的任务)');
+});
+
+test('sync: needing → transcript auto-advances → new turn re-pends → ignore excludes', () => {
+  const db = seedSession(openDb(':memory:'));
+  assert.equal(sessionsNeedingSync(db).length, 1);
+  assert.equal(sessionsNeedingSync(db)[0].pending, 2);
+  runTool(db, 'get_session_transcript', { session_id: 'S' }); // reading marks synced
+  assert.equal(sessionsNeedingSync(db).length, 0);
+  insertTask(db, { id: 'c', prompt: '新一轮', engine: 'claude', cwd: null, session_id: 'S', created_at: 100 });
+  markFinished(db, 'c', { status: 'done', output: 'ok', error: null, exitCode: 0, finishedAt: 101 });
+  assert.equal(sessionsNeedingSync(db).length, 1); // new turn → needs sync again
+  setSyncIgnored(db, 'S', true);
+  assert.equal(sessionsNeedingSync(db).length, 0); // ignored → excluded
+});
+
+test('runTool: check_sync / only_new / set_sync_ignore / mark_synced', () => {
+  const db = seedSession(openDb(':memory:'));
+  assert.match(runTool(db, 'check_sync', {}), /需要同步/);
+  assert.ok(runTool(db, 'list_sessions', { only_new: true }).includes('选品'));
+  runTool(db, 'set_sync_ignore', { session_id: 'S' });
+  assert.match(runTool(db, 'check_sync', {}), /没有需要同步/);
+  assert.equal(runTool(db, 'list_sessions', {}), '(当前没有会话)'); // ignored hidden by default
+  assert.ok(runTool(db, 'list_sessions', { include_ignored: true }).includes('已忽略'));
+  runTool(db, 'set_sync_ignore', { session_id: 'S', ignored: false });
+  runTool(db, 'mark_synced', { session_id: 'S' });
+  assert.match(runTool(db, 'check_sync', {}), /没有需要同步/);
+});
+
+test('getPrompt sync returns a usable prompt; unknown throws', () => {
+  assert.ok(getPrompt('sync').messages[0].content.text.includes('check_sync'));
+  assert.throws(() => getPrompt('nope'), /未知 prompt/);
+});
+
+test('HTTP POST /api/sessions/:id/sync-ignore sets flag / 404', async () => {
+  const { app } = makeApp();
+  const s = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'x', engine: 'claude' } })).json();
+  const r = await app.inject({ method: 'POST', url: `/api/sessions/${s.id}/sync-ignore`, headers: auth(), payload: { ignored: true } });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.json().sync_ignored, 1);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/sessions/nope/sync-ignore', headers: auth(), payload: { ignored: true } })).statusCode, 404);
 });
 
 test('GET /api/version returns current and no update when repoSlug unset', async () => {

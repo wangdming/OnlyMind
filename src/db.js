@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   engine               TEXT NOT NULL,      -- claude | codex | openai | anthropic
   summary              TEXT,               -- compressed history summary (API)
   turns_before_summary INTEGER NOT NULL DEFAULT 0,
+  sync_ignored         INTEGER NOT NULL DEFAULT 0, -- user marked "don't sync to local AI"
+  last_pulled_at       INTEGER,            -- MCP pull marker (synced up to this task time)
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -59,6 +61,13 @@ function migrate(db) {
   }
   if (!cols.includes('mcp')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN mcp INTEGER NOT NULL DEFAULT 0`);
+  }
+  const scols = db.prepare(`PRAGMA table_info(sessions)`).all().map((c) => c.name);
+  if (scols.length && !scols.includes('sync_ignored')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN sync_ignored INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (scols.length && !scols.includes('last_pulled_at')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN last_pulled_at INTEGER`);
   }
 }
 
@@ -219,6 +228,38 @@ export function setMcpServer(db, { name, url, header_name, header_value, now }) 
 export function deleteMcpServer(db, name) {
   const r = db.prepare('DELETE FROM mcp_servers WHERE name = ?').run(name);
   return r.changes > 0;
+}
+
+// --- session sync state (for the OnlyMind MCP server) ---------------------
+/** Mark a session synced up to its latest task (or `now` if empty). */
+export function markSessionPulled(db, id, now) {
+  const m = db.prepare('SELECT MAX(created_at) m FROM tasks WHERE session_id = ?').get(id)?.m;
+  db.prepare('UPDATE sessions SET last_pulled_at = ? WHERE id = ?').run(m || now, id);
+}
+export function setSyncIgnored(db, id, ignored) {
+  db.prepare('UPDATE sessions SET sync_ignored = ? WHERE id = ?').run(ignored ? 1 : 0, id);
+  return getSession(db, id);
+}
+/** Sessions with sync metadata: pending (tasks newer than last pull) + total. */
+export function sessionSyncRows(db, { engine } = {}) {
+  const where = engine ? 'WHERE s.engine = ?' : '';
+  const args = engine ? [engine] : [];
+  return db.prepare(
+    `SELECT s.*,
+       (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.id AND t.created_at > COALESCE(s.last_pulled_at, 0)) AS pending,
+       (SELECT COUNT(*) FROM tasks t WHERE t.session_id = s.id) AS total
+     FROM sessions s ${where} ORDER BY s.updated_at DESC`
+  ).all(...args);
+}
+/** Not-ignored sessions that have new turns since last pull. */
+export function sessionsNeedingSync(db) {
+  return sessionSyncRows(db).filter((s) => !s.sync_ignored && s.pending > 0);
+}
+/** Tasks in a session created after a timestamp (for incremental transcript). */
+export function sessionTasksSince(db, id, sinceMs) {
+  return db.prepare(
+    'SELECT * FROM tasks WHERE session_id = ? AND created_at > ? ORDER BY created_at ASC'
+  ).all(id, sinceMs || 0);
 }
 
 /** All tasks in a session (full rows incl output/error), oldest first — for transcripts. */
