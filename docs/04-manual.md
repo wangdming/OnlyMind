@@ -33,6 +33,8 @@ npm run package
 ```
 
 - 打包前会**自动把 4 份说明书同步到 `user-guide/`**(`scripts/sync-user-guide.mjs`),客户解压后可在顶层 `user-guide/` 直接找到说明书。
+- 打包时还会按当前版本从 `docs/CHANGELOG.md` 抽取本版说明,生成顶层 **`ChangeLog.md`** 一并打入包(客户解压即见本版更新内容;缺当前版本时会用 git 提交兜底并提醒补充)。
+- 发版时该 `ChangeLog.md` 会**作为 GitHub Release 的描述**显示在 Releases 页面(见 `.github/workflows/release.yml` 的 `body_path`)。**发版前记得在 `docs/CHANGELOG.md` 为新版本加一节。**
 - 产物:项目根目录下的 **`onlymind-<版本号>.zip`**(版本号取自 `package.json`,如 `onlymind-0.1.0.zip`)。
 - **自动排除**:`node_modules`、`data`、`.git`、`.env`、`*.db` 及旧的 zip —— 不含依赖、不含你本机的数据与密钥,体积小、可安全外发。
 - 跨平台:macOS/Linux 用 `zip`,Windows 用 `Compress-Archive`,命令一致。

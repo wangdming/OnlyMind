@@ -100,6 +100,36 @@ OnlyMind 能把已配置的 MCP **自动写入 Codex 配置**,无需手改 TOML:
 - 优麦云:后台 `/web/mcp/settings` 生成 `x-api-key`;配置页 https://www.sellerspace.com/web/mcp/setup
 - 卖家精灵:`open.sellersprite.com` 获取 `secret-key`;MCP 文档 https://open.sellersprite.com/mcp/43
 
+## 让本地 Claude / ChatGPT 续接 OnlyMind 的工作(OnlyMind MCP)
+
+把本机 OnlyMind 处理过的**会话与任务**暴露给你本地的 AI,让它读取并**无缝接着干**。只读本机数据、不联网。
+
+**挂到 Claude(一键):**
+```bash
+npm run mcp:claude            # 挂载(user 范围,所有目录可用)
+npm run mcp:claude -- remove  # 取消挂载
+```
+挂好后,在电脑任意目录运行 `claude`,对它说,例如:
+> 检查 OnlyMind 有没有需要同步的会话,有就读取并接着继续。
+
+它会**自动检查并只同步"有新内容、未忽略"的会话,已读取过的不重复**。用到的工具:
+- `check_sync` —— 检查哪些会话需要同步(续接前先调用)。
+- `list_sessions` —— 列出会话(id/名称/引擎/总轮数/待同步轮数/是否忽略)。
+- `get_session_transcript` —— 取某会话的**完整转录**(摘要 + 每轮问/答全文);**读取后自动标记已同步**。
+- `search_tasks` —— 全文检索;`set_sync_ignore` —— 把某会话标记为不同步。
+
+**标记"不需要同步"的两种方式:**
+- 手机端:选中会话后勾选「**不同步到本地 AI**」。
+- 或直接让本地 AI:「把 XX 会话标记为不需要同步」。
+
+在 Claude Code 里也可用斜杠命令 `/onlymind:sync` 一键完成"检查 + 同步"。
+
+**Codex / 支持 MCP 的 ChatGPT:** 在其 MCP 配置里加一个 **stdio** 服务,命令为:
+```
+node <OnlyMind 项目绝对路径>/scripts/mcp-server.mjs
+```
+(即本项目的 `scripts/mcp-server.mjs`;它会自动读取本机 OnlyMind 的数据库。)
+
 ## 安全要点(临时隧道)
 
 - 临时隧道**没有登录保护,唯一防线是令牌**:务必用强令牌,**网址别发到群/截图等公开场合**。

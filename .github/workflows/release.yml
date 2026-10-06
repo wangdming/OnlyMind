@@ -23,11 +23,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: 生成交付包
+      - name: 生成交付包(含本版 ChangeLog.md)
         run: npm run package
 
-      - name: 创建 Release 并上传 zip
+      - name: 创建 Release(描述取本版更新说明)并上传 zip
         uses: softprops/action-gh-release@v2
         with:
           files: onlymind-*.zip
-          generate_release_notes: true
+          body_path: ChangeLog.md        # 本版更新内容直接显示在 Release 页面
+          generate_release_notes: true    # 末尾追加自动的「Full Changelog」对比链接
