@@ -103,6 +103,29 @@ OnlyMind 能把已配置的 MCP **自动写入 Codex 配置**,无需手改 TOML:
 - 优麦云:后台 `/web/mcp/settings` 生成 `x-api-key`;配置页 https://www.sellerspace.com/web/mcp/setup
 - 卖家精灵:`open.sellersprite.com` 获取 `secret-key`;MCP 文档 https://open.sellersprite.com/mcp/43
 
+## 让本地 Claude / ChatGPT 续接 OnlyMind 的工作(OnlyMind MCP)
+
+把本机 OnlyMind 处理过的**会话与任务**暴露给你本地的 AI,让它读取并**无缝接着干**。只读本机数据、不联网。
+
+**挂到 Claude(一键):**
+```powershell
+npm run mcp:claude            # 挂载(user 范围,所有目录可用)
+npm run mcp:claude -- remove  # 取消挂载
+```
+挂好后,在电脑任意目录运行 `claude`,对它说,例如:
+> 用 onlymind 列出会话,把最近一个会话的完整转录取来,然后接着继续。
+
+它会用到三个工具:
+- `list_sessions` —— 列出会话(id/名称/引擎/轮数)。
+- `get_session_transcript` —— 取某会话的**完整转录**(摘要 + 每轮问/答全文)。
+- `search_tasks` —— 在所有任务里全文检索。
+
+**Codex / 支持 MCP 的 ChatGPT:** 在其 MCP 配置里加一个 **stdio** 服务,命令为:
+```
+node <OnlyMind 项目绝对路径>\scripts\mcp-server.mjs
+```
+(即本项目的 `scripts\mcp-server.mjs`;它会自动读取本机 OnlyMind 的数据库。)
+
 ## 安全要点(临时隧道)
 
 - 临时隧道**没有登录保护,唯一防线是令牌**:务必用强令牌,**网址别发到群/截图等公开场合**。

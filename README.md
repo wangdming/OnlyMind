@@ -69,6 +69,7 @@ npm start          # 终端会打印访问地址(含 LAN 地址)和 ACCESS TOKEN
 - ✋ 任务取消 / 重跑
 - 🚀 macOS / Windows 开机自启脚本(`scripts/`)
 - 🔌 MCP 接入:Claude 引擎可连外部 MCP 服务(如优麦云 / 卖家精灵),用自然语言查数据
+- 🔁 OnlyMind MCP 服务:把会话/任务暴露给本地 Claude/Codex/ChatGPT,无缝续接(`npm run mcp:claude`)
 - 🌐 远程访问:Cloudflare Tunnel + Access(手机在外网也能用,且可同时翻墙)
 - 🔐 API 令牌 + Cloudflare Access 多重保护
 

@@ -1,6 +1,6 @@
 {
   "name": "onlymind",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Send tasks from your phone to Claude Code / Codex running on your computer, execute them, and browse history.",
   "type": "module",
   "main": "src/index.js",
@@ -19,6 +19,8 @@
     "check:update": "node scripts/update.mjs --check",
     "tunnel": "node scripts/tunnel.mjs",
     "guide:sync": "node scripts/sync-user-guide.mjs",
+    "mcp:serve": "node scripts/mcp-server.mjs",
+    "mcp:claude": "node scripts/install-mcp-claude.mjs",
     "package": "node scripts/package.mjs",
     "test": "node --test"
   },

@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   openDb, insertTask, listTasks, getTask, markFinished,
-  createSession, sessionHistory, setSessionSummary,
+  createSession, getSession, sessionHistory, setSessionSummary, sessionTasksFull, searchTasks,
 } from '../src/db.js';
+import { buildTranscript, formatSessionList, formatSearch, runTool } from '../scripts/mcp-server.mjs';
 import { createQueue } from '../src/queue.js';
 import { buildServer } from '../src/server.js';
 import { ENGINES } from '../src/engines.js';
@@ -477,6 +478,60 @@ test('task accepts mcp flag', async () => {
   assert.equal(t.mcp, 1);
   const t2 = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'y' } })).json();
   assert.equal(t2.mcp, 0);
+});
+
+// --- OnlyMind MCP server (sessions → local AI) ----------------------------
+
+function seedSession(db) {
+  createSession(db, { id: 'S', name: '选品分析', engine: 'claude', now: 1 });
+  insertTask(db, { id: 'a', prompt: '分析 ASIN B01 的类目', engine: 'claude', cwd: null, session_id: 'S', created_at: 2 });
+  markFinished(db, 'a', { status: 'done', output: '该类目竞争中等,机会在长尾关键词。', error: null, exitCode: 0, finishedAt: 3 });
+  insertTask(db, { id: 'b', prompt: '列出长尾词', engine: 'claude', cwd: null, session_id: 'S', created_at: 4 });
+  markFinished(db, 'b', { status: 'failed', output: null, error: '超时', exitCode: 1, finishedAt: 5 });
+  return db;
+}
+
+test('sessionTasksFull returns all rows (incl output/error), oldest first', () => {
+  const db = seedSession(openDb(':memory:'));
+  const rows = sessionTasksFull(db, 'S');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].id, 'a');
+  assert.equal(rows[0].output, '该类目竞争中等,机会在长尾关键词。');
+  assert.equal(rows[1].status, 'failed');
+  assert.equal(rows[1].error, '超时');
+});
+
+test('searchTasks matches prompt or output, newest first, honors limit', () => {
+  const db = seedSession(openDb(':memory:'));
+  assert.equal(searchTasks(db, '长尾', 10).length, 2); // prompt of b + output of a
+  assert.equal(searchTasks(db, 'ASIN', 10).length, 1);
+  assert.equal(searchTasks(db, '长尾', 1).length, 1);
+  assert.equal(searchTasks(db, '不存在xyz', 10).length, 0);
+});
+
+test('buildTranscript includes full output + marks failures, not truncated', () => {
+  const db = seedSession(openDb(':memory:'));
+  const t = buildTranscript(getSession(db, 'S'), sessionTasksFull(db, 'S'));
+  assert.ok(t.includes('# 会话:选品分析'));
+  assert.ok(t.includes('该类目竞争中等,机会在长尾关键词。')); // full output present
+  assert.ok(t.includes('【错误】') && t.includes('超时'));
+});
+
+test('runTool: list/transcript/search + errors', () => {
+  const db = seedSession(openDb(':memory:'));
+  const list = runTool(db, 'list_sessions', {});
+  assert.ok(list.includes('选品分析') && list.includes('id: S'));
+  const tr = runTool(db, 'get_session_transcript', { session_id: 'S' });
+  assert.ok(tr.includes('【问】') && tr.includes('该类目竞争中等') && tr.includes('【错误】'));
+  const sr = runTool(db, 'search_tasks', { query: 'ASIN' });
+  assert.ok(sr.includes('任务 a'));
+  assert.throws(() => runTool(db, 'get_session_transcript', { session_id: 'nope' }), /未找到/);
+  assert.throws(() => runTool(db, 'unknown', {}), /未知工具/);
+});
+
+test('formatters handle empty input', () => {
+  assert.equal(formatSessionList([]), '(当前没有会话)');
+  assert.equal(formatSearch([]), '(没有匹配的任务)');
 });
 
 test('GET /api/version returns current and no update when repoSlug unset', async () => {

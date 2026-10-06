@@ -221,6 +221,22 @@ export function deleteMcpServer(db, name) {
   return r.changes > 0;
 }
 
+/** All tasks in a session (full rows incl output/error), oldest first — for transcripts. */
+export function sessionTasksFull(db, id) {
+  return db.prepare('SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC').all(id);
+}
+
+/** Full-text-ish search over task prompt/output, newest first. */
+export function searchTasks(db, query, limit = 20) {
+  const lim = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const like = `%${query}%`;
+  return db.prepare(
+    `SELECT id, session_id, engine, status, prompt, output, created_at
+     FROM tasks WHERE prompt LIKE ? OR output LIKE ?
+     ORDER BY created_at DESC LIMIT ?`
+  ).all(like, like, lim);
+}
+
 /** Finished tasks in a session, oldest first (for building conversation history). */
 export function sessionHistory(db, id) {
   return db.prepare(
