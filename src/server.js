@@ -4,12 +4,14 @@ import { randomUUID } from 'node:crypto';
 import {
   insertTask, getTask, listTasks, setSetting,
   createSession, getSession, listSessions, renameSession, deleteSession, touchSession,
+  setSessionCwd, countSessionTasks,
   sessionHistory, setSessionSummary, setSyncIgnored,
   listMcpServers, setMcpServer, deleteMcpServer,
 } from './db.js';
 import { isValidEngine, engineList, ENGINES } from './engines.js';
 import { validateKey, complete } from './providers.js';
 import { syncCodexConfig } from './codexmcp.js';
+import { setCodexThreadName } from './codex-appserver.mjs';
 import { taskBus } from './events.js';
 
 /**
@@ -31,7 +33,7 @@ function cmpVer(a, b) {
   return 0;
 }
 
-export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, getApiKey = () => null, models = {}, codexConfigPath = null, now = () => Date.now() }) {
+export function buildServer({ db, queue, token, publicDir, version = '0.0.0', repoSlug = null, getApiKey = () => null, models = {}, codexConfigPath = null, defaultCwd = null, now = () => Date.now() }) {
   const app = Fastify({ logger: false });
 
   // --- Auth: every /api route requires a valid token ----------------------
@@ -158,13 +160,25 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     if (eng.kind === 'api' && !getApiKey(eng.provider)) {
       return reply.code(400).send({ error: `引擎 ${engine} 需要先设置 ${eng.provider} API Key` });
     }
+    // A task runs in one directory. A session binds its directory on the first
+    // task and never crosses directories (so claude's dir-scoped --resume keeps
+    // working and the session stays coherent).
+    let effectiveCwd = cwd;
     if (sessionId) {
       const s = getSession(db, sessionId);
       if (!s) return reply.code(404).send({ error: 'session not found' });
       if (s.engine !== engine) return reply.code(400).send({ error: `会话绑定引擎 ${s.engine},与任务引擎 ${engine} 不一致` });
+      if (countSessionTasks(db, sessionId) === 0) {
+        effectiveCwd = cwd || defaultCwd || null; // first task binds the dir
+        setSessionCwd(db, sessionId, effectiveCwd, now());
+      } else if (cwd != null && cwd !== s.cwd) {
+        return reply.code(400).send({ error: `不允许会话跨目录:会话「${s.name}」已绑定目录 ${s.cwd || '(默认)'},本次任务目录 ${cwd} 不一致。留空即继承会话目录。` });
+      } else {
+        effectiveCwd = s.cwd; // inherit the session's bound dir
+      }
     }
 
-    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd, stream, concise, session_id: sessionId, mcp, created_at: now() });
+    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd: effectiveCwd, stream, concise, session_id: sessionId, mcp, created_at: now() });
     if (sessionId) touchSession(db, sessionId, now());
     queue.enqueue(task.id);
     return reply.code(201).send(task);
@@ -197,7 +211,22 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     if (!s) return reply.code(404).send({ error: 'not found' });
     const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : '';
     if (!name) return reply.code(400).send({ error: 'name is required' });
-    return renameSession(db, req.params.id, name, now());
+    const renamed = renameSession(db, req.params.id, name, now());
+
+    // Propagate the new name to the engine.
+    //  - codex (with a captured thread id): rename now via the app-server.
+    //  - claude: the name rides `-n` on the next task in this session.
+    //  - no engine session yet: it will be named when the first task runs.
+    let engineSync;
+    if (s.engine === 'codex' && s.engine_session_id) {
+      const r = await setCodexThreadName(s.engine_session_id, name).catch((e) => ({ ok: false, reason: e.message }));
+      engineSync = { attempted: true, ok: r.ok, when: 'now', reason: r.reason };
+    } else if (s.engine === 'claude') {
+      engineSync = { attempted: false, ok: null, when: 'next-task', note: '将在下次该会话执行任务时同步到 Claude' };
+    } else {
+      engineSync = { attempted: false, ok: null, when: 'first-task', note: '尚无引擎会话,首个任务创建时同步' };
+    }
+    return { ...renamed, engineSync };
   });
 
   app.delete('/api/sessions/:id', async (req, reply) => {
@@ -258,13 +287,16 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
   });
 
   // Re-run a task: create a fresh task copying its prompt/engine/cwd/stream.
+  // Stays in the SAME session (a task never leaves its session) and reuses the
+  // session's bound dir, so re-running never crosses session or directory.
   app.post('/api/tasks/:id/rerun', async (req, reply) => {
     const src = getTask(db, req.params.id);
     if (!src) return reply.code(404).send({ error: 'not found' });
     const task = insertTask(db, {
       id: randomUUID(), prompt: src.prompt, engine: src.engine, cwd: src.cwd,
-      stream: src.stream, concise: src.concise, created_at: now(),
+      stream: src.stream, concise: src.concise, session_id: src.session_id, mcp: src.mcp, created_at: now(),
     });
+    if (src.session_id) touchSession(db, src.session_id, now());
     queue.enqueue(task.id);
     return reply.code(201).send(task);
   });

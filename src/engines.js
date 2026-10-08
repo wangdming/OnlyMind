@@ -84,16 +84,22 @@ export const ENGINES = {
     stdinText(task) {
       return (task && task.concise ? CONCISE_INSTRUCTION + '\n\n' : '') + task.prompt;
     },
-    build() {
-      return ['exec', '--dangerously-bypass-approvals-and-sandbox', '-'];
+    // Native session continuity: the first turn of a session runs plain `exec`
+    // (its header line "session id: <uuid>" is captured as the engine session
+    // id); later turns `exec resume <id>` so codex keeps its own context.
+    // --skip-git-repo-check lets codex run outside a git repo.
+    build(task, opts = {}) {
+      const base = ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-'];
+      return opts.resumeId ? ['exec', 'resume', opts.resumeId, ...base] : ['exec', ...base];
     },
     parse(stdout) {
       return stdout;
     },
     stream: {
       // codex exec already streams human-readable output to stdout.
-      build() {
-        return ['exec', '--dangerously-bypass-approvals-and-sandbox', '-'];
+      build(task, opts = {}) {
+        const base = ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-'];
+        return opts.resumeId ? ['exec', 'resume', opts.resumeId, ...base] : ['exec', ...base];
       },
       line(raw) {
         return { delta: raw };

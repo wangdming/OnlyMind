@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   turns_before_summary INTEGER NOT NULL DEFAULT 0,
   sync_ignored         INTEGER NOT NULL DEFAULT 0, -- user marked "don't sync to local AI"
   last_pulled_at       INTEGER,            -- MCP pull marker (synced up to this task time)
+  engine_session_id    TEXT,               -- engine-side session id (codex thread_id; claude reuses our id)
+  cwd                  TEXT,               -- working dir bound on the first task (session never crosses dirs)
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -68,6 +70,12 @@ function migrate(db) {
   }
   if (scols.length && !scols.includes('last_pulled_at')) {
     db.exec(`ALTER TABLE sessions ADD COLUMN last_pulled_at INTEGER`);
+  }
+  if (scols.length && !scols.includes('engine_session_id')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN engine_session_id TEXT`);
+  }
+  if (scols.length && !scols.includes('cwd')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN cwd TEXT`);
   }
 }
 
@@ -198,6 +206,25 @@ export function listSessions(db, { engine } = {}) {
 export function renameSession(db, id, name, now) {
   db.prepare('UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?').run(name, now, id);
   return getSession(db, id);
+}
+/**
+ * Record the engine-side session id (codex thread_id). First-capture only:
+ * does nothing if one is already stored, so an occasional stray id can't
+ * clobber the established mapping. Returns the (possibly unchanged) row.
+ */
+export function setSessionEngineId(db, id, engineSessionId, now) {
+  db.prepare('UPDATE sessions SET engine_session_id = ?, updated_at = ? WHERE id = ? AND engine_session_id IS NULL')
+    .run(engineSessionId, now, id);
+  return getSession(db, id);
+}
+/** Bind the session's working directory (set once, on its first task). */
+export function setSessionCwd(db, id, cwd, now) {
+  db.prepare('UPDATE sessions SET cwd = ?, updated_at = ? WHERE id = ?').run(cwd ?? null, now, id);
+  return getSession(db, id);
+}
+/** Number of tasks in a session (used to detect the first task). */
+export function countSessionTasks(db, id) {
+  return db.prepare('SELECT COUNT(*) c FROM tasks WHERE session_id = ?').get(id).c;
 }
 export function touchSession(db, id, now) {
   db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, id);

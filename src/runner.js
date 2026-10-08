@@ -15,11 +15,22 @@ export function buildClaudeMcpConfig(servers) {
 }
 
 // Extra claude CLI args for session continuity (pure, testable).
-// First turn of a session creates the id; later turns resume it.
-export function claudeSessionArgs(sessionId, ctx) {
+// First turn of a session creates the id; later turns resume it. When a name is
+// given, `-n <name>` sets the session's display title in the engine (shown in
+// `claude -r`), so renaming in OnlyMind propagates to Claude on the next turn.
+export function claudeSessionArgs(sessionId, ctx, name) {
   if (!sessionId) return [];
   const hasPrior = !!ctx && Array.isArray(ctx.turns) && ctx.turns.length > 0;
-  return hasPrior ? ['--resume', sessionId] : ['--session-id', sessionId];
+  const args = hasPrior ? ['--resume', sessionId] : ['--session-id', sessionId];
+  if (name) args.push('-n', name);
+  return args;
+}
+
+// Capture codex's engine session id from its `exec` output header line
+// ("session id: <uuid>"). Pure, testable. Returns null if absent.
+export function parseCodexSessionId(stdout) {
+  const m = /session id:\s*([0-9a-fA-F-]{36})/.exec(stdout || '');
+  return m ? m[1] : null;
 }
 
 // Transcript prepended to the prompt for non-claude CLI engines (fallback
@@ -89,10 +100,16 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
 
     return new Promise((resolve) => {
       const streaming = !!task.stream && !!engine.stream;
-      let args = streaming ? engine.stream.build(task) : engine.build(task);
+      // Codex native sessions: resume by stored engine id after the first turn.
+      const codexResumeId = (engine.bin === 'codex' && task.session_id) ? (ctx?.engineSessionId || null) : null;
+      let args = streaming ? engine.stream.build(task, { resumeId: codexResumeId }) : engine.build(task, { resumeId: codexResumeId });
       // Session continuity for CLI engines.
-      if (task.session_id) {
-        if (engine.bin === 'claude') args = args.concat(claudeSessionArgs(task.session_id, ctx));
+      if (task.session_id && engine.bin === 'claude') {
+        // Pass the session name as the engine title. Keep it off argv on
+        // Windows (shell:true) when non-ASCII, to avoid code-page mangling.
+        const name = ctx?.name || null;
+        const safeName = name && (process.platform !== 'win32' || /^[\x00-\x7F]*$/.test(name)) ? name : null;
+        args = args.concat(claudeSessionArgs(task.session_id, ctx, safeName));
       }
       // MCP injection (claude only; codex configured in its own config).
       let mcpConfigFile = null;
@@ -130,9 +147,12 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
       // Deliver the prompt via stdin (cross-platform safe).
       if ((engine.promptVia || 'stdin') === 'stdin' && child.stdin) {
         let stdinText = engine.stdinText ? engine.stdinText(task) : task.prompt;
-        // claude keeps its own context via --session-id/--resume; other CLI
-        // engines get a prior-turns transcript prepended for continuity.
-        if (task.session_id && engine.bin !== 'claude') stdinText = cliTranscript(ctx) + stdinText;
+        // claude and codex both keep their own context natively (claude via
+        // --session-id/--resume, codex via `exec resume`). Only prepend a
+        // transcript for codex's FIRST turn (no resume id yet) so a session
+        // that predates native resume carries its prior turns into the new
+        // codex thread; subsequent turns rely on codex's own context.
+        if (task.session_id && engine.bin === 'codex' && !codexResumeId) stdinText = cliTranscript(ctx) + stdinText;
         child.stdin.on('error', () => { /* ignore EPIPE if child exits early */ });
         child.stdin.write(stdinText);
         child.stdin.end();
@@ -195,19 +215,23 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
         if (streaming && lineBuf) handleStreamLine(lineBuf);
 
         const streamOutput = finalText ?? streamedText;
+        // Codex prints its "session id: <uuid>" header to stderr (stdout is the
+        // clean answer); capture it so the queue can record the engine session
+        // id on the session's first turn.
+        const engineSessionId = engine.bin === 'codex' ? parseCodexSessionId(stderr) : null;
 
         if (canceled) {
-          resolve({ status: 'canceled', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: 'Canceled by user', exitCode: code });
+          resolve({ status: 'canceled', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: 'Canceled by user', exitCode: code, engineSessionId });
           return;
         }
         if (timedOut) {
-          resolve({ status: 'failed', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: `Task timed out after ${taskTimeoutMs} ms`, exitCode: code });
+          resolve({ status: 'failed', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: `Task timed out after ${taskTimeoutMs} ms`, exitCode: code, engineSessionId });
           return;
         }
         if (code === 0) {
-          resolve({ status: 'done', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: stderr || null, exitCode: 0 });
+          resolve({ status: 'done', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: stderr || null, exitCode: 0, engineSessionId });
         } else {
-          resolve({ status: 'failed', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: stderr || `Exited with code ${code}`, exitCode: code });
+          resolve({ status: 'failed', output: (streaming ? streamOutput : engine.parse(rawStdout)) || null, error: stderr || `Exited with code ${code}`, exitCode: code, engineSessionId });
         }
       });
     });

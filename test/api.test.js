@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {
   openDb, insertTask, listTasks, getTask, markFinished,
   createSession, getSession, sessionHistory, setSessionSummary, sessionTasksFull, searchTasks,
-  sessionsNeedingSync, setSyncIgnored,
+  sessionsNeedingSync, setSyncIgnored, setSessionEngineId,
 } from '../src/db.js';
-import { buildTranscript, formatSessionList, formatSearch, runTool, getPrompt } from '../scripts/mcp-server.mjs';
+import { buildTranscript, formatSessionList, formatSearch, runTool, getPrompt, buildResumeHint, formatResumeHint } from '../scripts/mcp-server.mjs';
 import { createQueue } from '../src/queue.js';
 import { buildServer } from '../src/server.js';
 import { ENGINES } from '../src/engines.js';
-import { spawnRunner, claudeSessionArgs, cliTranscript, buildClaudeMcpConfig } from '../src/runner.js';
+import { spawnRunner, claudeSessionArgs, parseCodexSessionId, cliTranscript, buildClaudeMcpConfig } from '../src/runner.js';
 import { assembleContext } from '../src/providers.js';
 import { buildCodexMcpToml, syncCodexConfig, MARK_START, MARK_END } from '../src/codexmcp.js';
 import fs from 'node:fs';
@@ -373,6 +373,51 @@ test('claudeSessionArgs: first turn creates, later turns resume', () => {
   assert.deepEqual(claudeSessionArgs('sid', { turns: [{ prompt: 'a', output: 'b' }] }), ['--resume', 'sid']);
 });
 
+test('claudeSessionArgs: name appends -n (engine title sync)', () => {
+  assert.deepEqual(claudeSessionArgs('sid', { turns: [] }, '库存分析'), ['--session-id', 'sid', '-n', '库存分析']);
+  assert.deepEqual(claudeSessionArgs('sid', { turns: [{ prompt: 'a', output: 'b' }] }, '库存分析'), ['--resume', 'sid', '-n', '库存分析']);
+  assert.deepEqual(claudeSessionArgs('sid', { turns: [] }, ''), ['--session-id', 'sid']); // no name -> no -n
+  assert.deepEqual(claudeSessionArgs(null, null, 'x'), []); // no session -> nothing
+});
+
+test('parseCodexSessionId extracts the uuid from the codex header', () => {
+  const header = 'OpenAI Codex v0.161.0\n--------\nworkdir: /x\nsession id: 01a119b6-9f76-70f2-8e1a-24c07337d376\n--------\n';
+  assert.equal(parseCodexSessionId(header), '01a119b6-9f76-70f2-8e1a-24c07337d376');
+  assert.equal(parseCodexSessionId('no id here'), null);
+  assert.equal(parseCodexSessionId(''), null);
+  assert.equal(parseCodexSessionId(null), null);
+});
+
+test('codex build: first turn vs resume (both stream and non-stream)', () => {
+  const first = ENGINES.codex.build({}, {});
+  assert.deepEqual(first, ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-']);
+  const resume = ENGINES.codex.build({}, { resumeId: 'tid-123' });
+  assert.deepEqual(resume, ['exec', 'resume', 'tid-123', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-']);
+  const resumeStream = ENGINES.codex.stream.build({}, { resumeId: 'tid-123' });
+  assert.deepEqual(resumeStream, ['exec', 'resume', 'tid-123', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-']);
+});
+
+test('setSessionEngineId records once and does not clobber', () => {
+  const db = openDb(':memory:');
+  createSession(db, { id: 's1', name: 'n', engine: 'codex', now: 1 });
+  setSessionEngineId(db, 's1', 'thread-A', 2);
+  assert.equal(getSession(db, 's1').engine_session_id, 'thread-A');
+  setSessionEngineId(db, 's1', 'thread-B', 3); // first-capture only
+  assert.equal(getSession(db, 's1').engine_session_id, 'thread-A');
+});
+
+test('PATCH rename reports engineSync (claude=next-task, new codex=first-task)', async () => {
+  const { app } = makeApp();
+  const cl = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'c', engine: 'claude' } })).json();
+  const rc = (await app.inject({ method: 'PATCH', url: `/api/sessions/${cl.id}`, headers: auth(), payload: { name: '新名' } })).json();
+  assert.equal(rc.name, '新名');
+  assert.equal(rc.engineSync.when, 'next-task');
+
+  const cx = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 'x', engine: 'codex' } })).json();
+  const rx = (await app.inject({ method: 'PATCH', url: `/api/sessions/${cx.id}`, headers: auth(), payload: { name: '新X' } })).json();
+  assert.equal(rx.engineSync.when, 'first-task'); // no engine_session_id captured yet
+});
+
 test('cliTranscript formats summary + prior turns, empty when none', () => {
   assert.equal(cliTranscript(null), '');
   assert.equal(cliTranscript({ turns: [] }), '');
@@ -518,12 +563,38 @@ test('buildTranscript includes full output + marks failures, not truncated', () 
   assert.ok(t.includes('【错误】') && t.includes('超时'));
 });
 
+test('buildResumeHint: claude (cwd-scoped) / codex (any cwd) / api & uncaptured => null', () => {
+  // claude: resume id = session id, cwd-scoped, only when it has turns
+  const h = buildResumeHint({ engine: 'claude', id: 'S' }, '/work/dir', 2);
+  assert.equal(h.command, 'claude --resume S');
+  assert.match(h.note, /\/work\/dir/);
+  assert.equal(buildResumeHint({ engine: 'claude', id: 'S' }, '/x', 0), null); // no turns yet
+  // codex: resume by captured thread id, any cwd
+  const c = buildResumeHint({ engine: 'codex', id: 'S', engine_session_id: 'tid-9' }, '/x', 3);
+  assert.equal(c.command, 'codex exec resume tid-9');
+  assert.match(c.note, /任意目录/);
+  assert.equal(buildResumeHint({ engine: 'codex', id: 'S', engine_session_id: null }, '/x', 3), null);
+  // api engines: no engine-side session
+  assert.equal(buildResumeHint({ engine: 'openai', id: 'S' }, '/x', 3), null);
+});
+
+test('formatResumeHint + buildTranscript inject the native-resume command', () => {
+  assert.equal(formatResumeHint(null), '');
+  const hint = buildResumeHint({ engine: 'codex', id: 'S', engine_session_id: 'tid-9' }, null, 1);
+  assert.match(formatResumeHint(hint), /codex exec resume tid-9/);
+  const t = buildTranscript({ name: 'n', engine: 'codex', id: 'S', summary: null }, [], false, hint);
+  assert.match(t, /续接方式/);
+  assert.match(t, /codex exec resume tid-9/);
+});
+
 test('runTool: list/transcript/search + errors', () => {
   const db = seedSession(openDb(':memory:'));
   const list = runTool(db, 'list_sessions', {});
   assert.ok(list.includes('选品分析') && list.includes('id: S'));
+  assert.ok(list.includes('可原生续接')); // claude session with turns
   const tr = runTool(db, 'get_session_transcript', { session_id: 'S' });
   assert.ok(tr.includes('【问】') && tr.includes('该类目竞争中等') && tr.includes('【错误】'));
+  assert.ok(tr.includes('claude --resume S')); // native-resume hint present
   const sr = runTool(db, 'search_tasks', { query: 'ASIN' });
   assert.ok(sr.includes('任务 a'));
   assert.throws(() => runTool(db, 'get_session_transcript', { session_id: 'nope' }), /未找到/);
@@ -618,6 +689,45 @@ test('rerun preserves concise', async () => {
   await queue.drain();
   const rerun = (await app.inject({ method: 'POST', url: `/api/tasks/${created.id}/rerun`, headers: auth() })).json();
   assert.equal(rerun.concise, 0);
+});
+
+test('session binds its directory on first task and never crosses dirs', async () => {
+  const { app, db } = makeApp();
+  const s = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 's', engine: 'claude' } })).json();
+  // First task binds the session's dir.
+  const t1 = await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'a', engine: 'claude', session_id: s.id, cwd: '/dir/a' } });
+  assert.equal(t1.statusCode, 201);
+  assert.equal(t1.json().cwd, '/dir/a');
+  assert.equal(getSession(db, s.id).cwd, '/dir/a');
+  // A different dir is rejected.
+  const bad = await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'b', engine: 'claude', session_id: s.id, cwd: '/dir/b' } });
+  assert.equal(bad.statusCode, 400);
+  assert.match(bad.json().error, /不允许会话跨目录/);
+  // Blank inherits the bound dir; same dir is fine.
+  const t2 = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'c', engine: 'claude', session_id: s.id } })).json();
+  assert.equal(t2.cwd, '/dir/a');
+  const t3 = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'd', engine: 'claude', session_id: s.id, cwd: '/dir/a' } })).json();
+  assert.equal(t3.cwd, '/dir/a');
+});
+
+test('first task binds to defaultCwd when none given', async () => {
+  const db = openDb(':memory:');
+  const queue = fakeQueue();
+  const app = buildServer({ db, queue, token: TOKEN, defaultCwd: '/srv/home' });
+  const s = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 's', engine: 'codex' } })).json();
+  const t1 = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'a', engine: 'codex', session_id: s.id } })).json();
+  assert.equal(t1.cwd, '/srv/home');
+  assert.equal(getSession(db, s.id).cwd, '/srv/home');
+});
+
+test('rerun stays in the same session (preserves session_id + mcp)', async () => {
+  const { app, db } = makeApp();
+  const s = (await app.inject({ method: 'POST', url: '/api/sessions', headers: auth(), payload: { name: 's', engine: 'claude' } })).json();
+  const t = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'x', engine: 'claude', session_id: s.id, mcp: true } })).json();
+  const rerun = (await app.inject({ method: 'POST', url: `/api/tasks/${t.id}/rerun`, headers: auth() })).json();
+  assert.equal(rerun.session_id, s.id); // did not leave its session
+  assert.equal(rerun.mcp, 1);
+  assert.equal(getTask(db, rerun.id).cwd, getTask(db, t.id).cwd); // same dir
 });
 
 test('streaming task appends incremental output via onData', async () => {

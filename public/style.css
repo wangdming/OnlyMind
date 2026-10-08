@@ -85,6 +85,15 @@ button.icon-btn { background: none; font-size: 20px; padding: 4px 8px; }
   white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto;
 }
 .task .output.err { color: #fca5a5; }
+.task .output .otext { white-space: pre-wrap; word-break: break-word; }
+.task .output .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 6px 0; }
+.task .output table.md-tbl { border-collapse: collapse; width: max-content; max-width: none; font-size: 12px; }
+.task .output table.md-tbl th,
+.task .output table.md-tbl td {
+  border: 1px solid #263149; padding: 4px 8px; white-space: nowrap; vertical-align: top; text-align: left;
+}
+.task .output table.md-tbl thead th { background: #121a2e; font-weight: 600; }
+.task .output table.md-tbl tbody tr:nth-child(even) { background: #0d1424; }
 .task .actions { display: flex; gap: 8px; margin-top: 10px; }
 .task .actions button { font-size: 13px; padding: 7px 12px; }
 .task .actions .cancel { background: #3b2130; color: #fca5a5; }

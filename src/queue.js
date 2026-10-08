@@ -14,7 +14,7 @@ import { emitChunk, emitStatus } from './events.js';
  * @param {(task:object, opts:{signal:AbortSignal, onData:(t:string)=>void})=>Promise<object>} deps.run
  * @param {()=>number} [deps.now]
  */
-export function createQueue({ db, run, now = () => Date.now() }) {
+export function createQueue({ db, run, now = () => Date.now(), onFinished = () => {} }) {
   let processing = false;
   const pending = [];
   let currentId = null;
@@ -65,6 +65,9 @@ export function createQueue({ db, run, now = () => Date.now() }) {
           finishedAt: now(),
         });
         emitStatus(id, finished);
+        // Let the host persist engine-side session info (e.g. codex thread id)
+        // and sync the session name. Best-effort — never breaks the queue.
+        try { await onFinished(finished, result); } catch { /* ignore */ }
       }
     } finally {
       processing = false;

@@ -1,7 +1,8 @@
 import { config } from './config.js';
-import { openDb, getSetting, getSession, sessionHistory, listMcpServers } from './db.js';
+import { openDb, getSetting, getSession, sessionHistory, listMcpServers, setSessionEngineId } from './db.js';
 import { createQueue } from './queue.js';
 import { spawnRunner } from './runner.js';
+import { setCodexThreadName } from './codex-appserver.mjs';
 import { buildServer } from './server.js';
 import { networkInterfaces, homedir } from 'node:os';
 import path from 'node:path';
@@ -27,19 +28,38 @@ async function main() {
   // Session continuity: summary + turns AFTER the compressed prefix.
   const getSessionContext = (sessionId) => {
     const s = getSession(db, sessionId);
-    if (!s) return { summary: null, turns: [] };
+    if (!s) return { summary: null, turns: [], name: null, engineSessionId: null };
     const all = sessionHistory(db, sessionId);
-    return { summary: s.summary || null, turns: all.slice(s.turns_before_summary || 0) };
+    return {
+      summary: s.summary || null,
+      turns: all.slice(s.turns_before_summary || 0),
+      name: s.name || null,
+      engineSessionId: s.engine_session_id || null,
+    };
   };
 
   const getMcpServers = () => listMcpServers(db);
 
   const run = spawnRunner({ defaultCwd: config.defaultCwd, taskTimeoutMs: config.taskTimeoutMs, getApiKey, models, getSessionContext, getMcpServers });
-  const queue = createQueue({ db, run });
+
+  // After a task finishes: on a codex session's first turn, record the engine
+  // thread id and push the OnlyMind session name to codex (official rename).
+  const onFinished = async (task, result) => {
+    if (!task?.session_id || !result?.engineSessionId) return;
+    const s = getSession(db, task.session_id);
+    if (!s || s.engine_session_id) return; // already captured
+    setSessionEngineId(db, s.id, result.engineSessionId, Date.now());
+    if (task.engine === 'codex' && s.name) {
+      const r = await setCodexThreadName(result.engineSessionId, s.name).catch((e) => ({ ok: false, reason: e.message }));
+      if (!r.ok) console.warn(`[codex] 设置会话名失败(${s.name}):${r.reason}`);
+    }
+  };
+
+  const queue = createQueue({ db, run, onFinished });
   // Codex reads MCP config from $CODEX_HOME/config.toml (default ~/.codex).
   const codexConfigPath = path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml');
 
-  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug, getApiKey, models, codexConfigPath });
+  const app = buildServer({ db, queue, token: config.token, publicDir: config.publicDir, version: config.version, repoSlug: config.repoSlug, getApiKey, models, codexConfigPath, defaultCwd: config.defaultCwd });
 
   await app.listen({ host: config.host, port: config.port });
 

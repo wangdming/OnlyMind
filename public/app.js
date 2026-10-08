@@ -43,6 +43,79 @@ function fmtTime(ms) {
   return ms ? new Date(ms).toLocaleString() : '';
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---- Output rendering -----------------------------------------------------
+// Task output is plain text that often contains GitHub-flavored Markdown pipe
+// tables (rows built from "|" and "---"). On a narrow phone, dumping them as
+// pre-wrap monospace wraps every row into an unreadable blob, so we convert
+// detected table blocks into real, horizontally-scrollable <table> elements.
+// Everything else stays as pre-wrap text.
+function splitRow(s) {
+  let r = s.trim();
+  if (r.startsWith('|')) r = r.slice(1);
+  if (r.endsWith('|')) r = r.slice(0, -1);
+  return r.split('|').map((c) => c.trim());
+}
+
+function renderOutput(text) {
+  const lines = String(text).split('\n');
+  let html = '';
+  let buf = [];
+  const flush = () => {
+    if (buf.length) { html += `<div class="otext">${escapeHtml(buf.join('\n'))}</div>`; buf = []; }
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // A table = a header row with "|", then a separator row whose cells are
+    // all dash-runs (---, :--, --:, :-:) and whose column count matches.
+    if (line.includes('|') && i + 1 < lines.length) {
+      const header = splitRow(line);
+      const sep = splitRow(lines[i + 1]);
+      const sepOk = /-/.test(lines[i + 1]) && sep.length === header.length &&
+        sep.every((c) => /^:?-+:?$/.test(c));
+      if (sepOk) {
+        flush();
+        const aligns = sep.map((c) => {
+          const l = c.startsWith(':'), r = c.endsWith(':');
+          return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+        });
+        const td = (txt, c, tag) => {
+          const a = aligns[c] ? ` style="text-align:${aligns[c]}"` : '';
+          return `<${tag}${a}>${escapeHtml(txt)}</${tag}>`;
+        };
+        let t = '<div class="tbl-wrap"><table class="md-tbl"><thead><tr>';
+        header.forEach((h, c) => { t += td(h, c, 'th'); });
+        t += '</tr></thead><tbody>';
+        i += 2;
+        while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') {
+          const row = splitRow(lines[i]);
+          t += '<tr>';
+          for (let c = 0; c < header.length; c++) t += td(row[c] || '', c, 'td');
+          t += '</tr>';
+          i++;
+        }
+        html += t + '</tbody></table></div>';
+        continue;
+      }
+    }
+    buf.push(line);
+    i++;
+  }
+  flush();
+  return html;
+}
+
+function setOutput(el, text, isError) {
+  el.refs.output.classList.toggle('err', !!isError);
+  if (isError || !text) { el.refs.output.textContent = text || '(无输出)'; return; }
+  el.refs.output.innerHTML = renderOutput(text);
+}
+
 // ---- Card lifecycle -------------------------------------------------------
 function createCard(t) {
   const el = document.createElement('div');
@@ -98,8 +171,7 @@ function updateCard(el, t) {
   if (el._es) return;
   el.refs.output.classList.remove('hidden');
   const err = t.status === 'failed' && t.error && !t.output;
-  el.refs.output.classList.toggle('err', !!err);
-  el.refs.output.textContent = t.output || t.error || '(无输出)';
+  setOutput(el, t.output || t.error || '', err);
 }
 
 function renderActions(el, t) {
@@ -328,6 +400,24 @@ function renderSessionBar() {
   $('sessMsg').textContent = '';
   const cur = state.sessions.find((s) => s.id === state.currentSession);
   $('sessNoSync').checked = !!(cur && cur.sync_ignored);
+  // Compress only applies to API engines; CLI engines (claude/codex) manage
+  // their own context, so hide the button for them.
+  const isApi = !!(cur && state.engineById[cur.engine]?.kind === 'api');
+  $('sessCompress').classList.toggle('hidden', !isApi);
+
+  // A session is bound to one working directory (set by its first task) and
+  // never crosses directories. Once bound, show it read-only; an unbound
+  // session lets the first task choose the dir.
+  const cwdEl = $('cwd');
+  if (cur && cur.cwd) {
+    cwdEl.value = cur.cwd;
+    cwdEl.disabled = true;
+    cwdEl.title = '该会话已绑定此工作目录,不可更改';
+  } else {
+    if (cwdEl.disabled || cur) cwdEl.value = '';
+    cwdEl.disabled = false;
+    cwdEl.title = '';
+  }
 }
 
 async function onSessionChange() {
@@ -353,8 +443,22 @@ async function renameSession() {
   const cur = state.sessions.find((s) => s.id === state.currentSession);
   const name = (window.prompt('重命名会话:', cur?.name || '') || '').trim();
   if (!name) return;
-  try { await api(`/api/sessions/${state.currentSession}`, { method: 'PATCH', body: JSON.stringify({ name }) }); await loadSessions(); }
-  catch (e) { alert(e.message); }
+  $('sessMsg').textContent = '重命名中…';
+  try {
+    // PATCH returns the persisted row; confirm the server actually saved it
+    // (not just an optimistic local change) before telling the user it worked.
+    const updated = await api(`/api/sessions/${state.currentSession}`, {
+      method: 'PATCH', body: JSON.stringify({ name }),
+    });
+    await loadSessions();
+    if (!updated || updated.name !== name) { $('sessMsg').textContent = '重命名可能未生效,请刷新确认'; return; }
+    const sy = updated.engineSync || {};
+    let tail = '';
+    if (sy.when === 'now') tail = sy.ok ? ' · 已同步到引擎 ✓' : ` · 引擎同步失败(${sy.reason || '未知'})`;
+    else if (sy.when === 'next-task') tail = ' · 将在下次任务同步到引擎';
+    else if (sy.when === 'first-task') tail = ' · 首个任务时同步到引擎';
+    $('sessMsg').textContent = `已重命名为「${name}」✓${tail}`;
+  } catch (e) { $('sessMsg').textContent = `重命名失败:${e.message}`; }
 }
 
 async function deleteSession() {
@@ -527,6 +631,9 @@ $('submit').addEventListener('click', async () => {
     });
     $('prompt').value = '';
     $('submitMsg').textContent = '已提交 ✓';
+    // The first task in a session binds its directory — refresh so the cwd
+    // field reflects the now-bound dir (read-only).
+    if (state.currentSession) await loadSessions();
     await loadMore(true);
   } catch (e) {
     $('submitMsg').textContent = e.message;

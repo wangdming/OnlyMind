@@ -21,8 +21,9 @@ export const SERVER_INSTRUCTIONS =
   '当用户想"续接之前的工作"或你需要了解 OnlyMind 处理过什么时:\n' +
   '1) 先调用 check_sync 看有哪些会话"需要同步"(有新轮且未被忽略);\n' +
   '2) 对每个需要同步的会话调用 get_session_transcript 读取完整转录——读取后它会被自动标记为已同步,下次不再重复出现;\n' +
-  '3) 基于转录继续工作。\n' +
-  '其它:list_sessions 可浏览(only_new 只看有新内容的);search_tasks 全文检索;' +
+  '3) 续接工作:转录顶部若给出「原生续接命令」,且你能运行该引擎 CLI,优先用它直接续接引擎原生会话(上下文最完整)——' +
+  'codex(codex exec resume <id>)任意目录可用;claude(claude --resume <id>)需在提示的目录下运行。否则基于转录继续。\n' +
+  '其它:list_sessions 可浏览(only_new 只看有新内容的;标「可原生续接」者支持上面方式);search_tasks 全文检索;' +
   'set_sync_ignore 可把某会话标记为"不需要同步"(之后 check_sync 会跳过它);mark_synced 可不读取就标记已同步。';
 
 function fmtTime(ms) {
@@ -34,10 +35,11 @@ function fmtTime(ms) {
 // ---- pure formatters (testable) ------------------------------------------
 export function formatSessionList(rows) {
   if (!rows.length) return '(当前没有会话)';
-  return rows.map((s) =>
-    `- ${s.name}(引擎 ${s.engine},共 ${s.total ?? '?'} 轮,待同步 ${s.pending ?? 0})` +
-    (s.sync_ignored ? ' [已忽略]' : '') + ` · id: ${s.id}`
-  ).join('\n');
+  return rows.map((s) => {
+    const native = s.engine === 'codex' ? !!s.engine_session_id : (s.engine === 'claude' && (s.total ?? 0) > 0);
+    return `- ${s.name}(引擎 ${s.engine},共 ${s.total ?? '?'} 轮,待同步 ${s.pending ?? 0})` +
+      (s.sync_ignored ? ' [已忽略]' : '') + (native ? ' · 可原生续接' : '') + ` · id: ${s.id}`;
+  }).join('\n');
 }
 
 export function formatSyncCheck(needing) {
@@ -47,11 +49,48 @@ export function formatSyncCheck(needing) {
     '\n用 get_session_transcript 读取完整转录(读取即视为已同步)。';
 }
 
-export function buildTranscript(session, tasks, partial = false) {
+// Native-resume hint so a local AI can continue the engine's OWN session
+// (fuller context than a text transcript). Pure/testable.
+//  - claude: resume id is OnlyMind's session id; cwd-scoped (claude archives
+//    transcripts per project dir), so the cwd must match where tasks ran.
+//    Only available once the session has had a turn (total > 0).
+//  - codex: resume id is the captured thread id; works from any cwd.
+//  - api engines: no engine-side session → null (use the transcript).
+export function buildResumeHint(session, cwd, total) {
+  if (session.engine === 'claude') {
+    if (typeof total === 'number' && total <= 0) return null;
+    return {
+      engine: 'claude', id: session.id, cwd: cwd || null,
+      command: `claude --resume ${session.id}`,
+      note: cwd
+        ? `需在目录「${cwd}」下运行(claude 按项目目录归档会话)`
+        : '需在该会话任务当初运行的目录下运行(claude 按项目目录归档会话)',
+    };
+  }
+  if (session.engine === 'codex') {
+    if (!session.engine_session_id) return null;
+    return {
+      engine: 'codex', id: session.engine_session_id, cwd: null,
+      command: `codex exec resume ${session.engine_session_id}`,
+      note: '任意目录均可',
+    };
+  }
+  return null; // api engines: no engine-side session
+}
+
+export function formatResumeHint(hint) {
+  if (!hint) return '';
+  return '续接方式(二选一):\n' +
+    `- 原生续接(推荐,上下文最完整):若你能运行该引擎 CLI,执行 \`${hint.command}\` —— ${hint.note}\n` +
+    '- 或:基于下方转录继续\n';
+}
+
+export function buildTranscript(session, tasks, partial = false, resumeHint = null) {
   const head =
     `# 会话:${session.name}\n` +
     `引擎:${session.engine} · id:${session.id}\n` +
     `摘要:${session.summary || '(无)'}\n` +
+    formatResumeHint(resumeHint) +
     (partial ? `增量:上次同步之后的新 ${tasks.length} 轮\n` : `共 ${tasks.length} 轮\n`);
   const body = tasks.map((t, i) => {
     let s = `\n## [${i + 1}] ${t.status} · ${fmtTime(t.created_at)}\n【问】\n${t.prompt}\n【答】\n${t.output ?? ''}`;
@@ -116,7 +155,7 @@ export function getPrompt(name) {
       role: 'user',
       content: {
         type: 'text',
-        text: '请调用 check_sync 检查有无需要同步的 OnlyMind 会话。若有,逐个用 get_session_transcript 读取完整转录(读取即自动标记已同步),再简要说明并在此基础上继续这些工作。已被标记为不同步的会话会自动跳过。',
+        text: '请调用 check_sync 检查有无需要同步的 OnlyMind 会话。若有,逐个用 get_session_transcript 读取完整转录(读取即自动标记已同步)。续接时:转录顶部若给出「原生续接命令」且你能运行该引擎 CLI,优先据此直接续接引擎原生会话(codex 任意目录、claude 需在提示目录);否则基于转录继续。已被标记为不同步的会话会自动跳过。',
       },
     }],
   };
@@ -136,10 +175,15 @@ export function runTool(db, name, args = {}) {
     if (!args.session_id) throw new Error('缺少 session_id');
     const s = getSession(db, args.session_id);
     if (!s) throw new Error('未找到该会话');
+    const full = sessionTasksFull(db, s.id); // for cwd + total (native-resume hint)
     const tasks = args.since_last_pull
       ? sessionTasksSince(db, s.id, s.last_pulled_at || 0)
-      : sessionTasksFull(db, s.id);
-    const text = buildTranscript(s, tasks, !!args.since_last_pull);
+      : full;
+    // The session is bound to one directory (set on its first task), so use it
+    // directly for claude's dir-scoped --resume hint.
+    const cwd = s.cwd || config.defaultCwd;
+    const hint = buildResumeHint(s, cwd, full.length);
+    const text = buildTranscript(s, tasks, !!args.since_last_pull, hint);
     markSessionPulled(db, s.id, Date.now()); // reading = synced up to now
     return text;
   }
