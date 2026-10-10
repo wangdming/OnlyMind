@@ -64,6 +64,9 @@ function migrate(db) {
   if (!cols.includes('mcp')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN mcp INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!cols.includes('model')) {
+    db.exec(`ALTER TABLE tasks ADD COLUMN model TEXT`);
+  }
   const scols = db.prepare(`PRAGMA table_info(sessions)`).all().map((c) => c.name);
   if (scols.length && !scols.includes('sync_ignored')) {
     db.exec(`ALTER TABLE sessions ADD COLUMN sync_ignored INTEGER NOT NULL DEFAULT 0`);
@@ -96,11 +99,11 @@ export function openDb(dbPath) {
 
 export function insertTask(db, task) {
   db.prepare(
-    `INSERT INTO tasks (id, prompt, engine, cwd, stream, concise, session_id, mcp, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
+    `INSERT INTO tasks (id, prompt, engine, cwd, stream, concise, session_id, mcp, model, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
   ).run(
     task.id, task.prompt, task.engine, task.cwd ?? null,
-    task.stream ? 1 : 0, task.concise ? 1 : 0, task.session_id ?? null, task.mcp ? 1 : 0, task.created_at
+    task.stream ? 1 : 0, task.concise ? 1 : 0, task.session_id ?? null, task.mcp ? 1 : 0, task.model ?? null, task.created_at
   );
   return getTask(db, task.id);
 }

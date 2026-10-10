@@ -65,7 +65,11 @@
       <label class="grow">引擎
         <select id="engine"></select>
       </label>
+      <label class="grow">模型
+        <select id="model"></select>
+      </label>
     </div>
+    <input id="modelCustom" class="hidden" type="text" placeholder="自定义模型名,例如 claude-opus-4-8" />
     <div id="apiKeyRow" class="card inline hidden">
       <label>该引擎需要 <span id="apiKeyProvider"></span> API Key
         <input id="apiKeyInput" type="password" placeholder="输入 API Key 后验证" autocomplete="off" />

@@ -730,6 +730,47 @@ test('rerun stays in the same session (preserves session_id + mcp)', async () =>
   assert.equal(getTask(db, rerun.id).cwd, getTask(db, t.id).cwd); // same dir
 });
 
+// --- model selection -------------------------------------------------------
+
+test('CLI build injects --model / -m only when a model is set', () => {
+  assert.deepEqual(ENGINES.claude.build({ prompt: 'x' }), ['-p', '--output-format', 'json', '--dangerously-skip-permissions']);
+  assert.ok(ENGINES.claude.build({ prompt: 'x', model: 'sonnet' }).join(' ').includes('--model sonnet'));
+  assert.ok(ENGINES.claude.stream.build({ prompt: 'x', model: 'opus' }).join(' ').includes('--model opus'));
+  const first = ENGINES.codex.build({ model: 'gpt-x' }, {});
+  assert.deepEqual(first, ['exec', '-m', 'gpt-x', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-']);
+  const resume = ENGINES.codex.build({ model: 'gpt-x' }, { resumeId: 'tid' });
+  assert.deepEqual(resume, ['exec', 'resume', 'tid', '-m', 'gpt-x', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-']);
+});
+
+test('/api/engines exposes model catalog + selected; save endpoint updates it', async () => {
+  const db = openDb(':memory:');
+  const app = buildServer({ db, queue: fakeQueue(), token: TOKEN, models: { openai: 'gpt-4o', anthropic: 'claude-sonnet-4-6' } });
+  let engines = (await app.inject({ method: 'GET', url: '/api/engines', headers: auth() })).json().engines;
+  const claude = engines.find((e) => e.id === 'claude');
+  const anthropic = engines.find((e) => e.id === 'anthropic');
+  assert.ok(Array.isArray(claude.models) && claude.models.some((m) => m.id === 'sonnet'));
+  assert.equal(claude.selected, ''); // CLI default = no model
+  assert.equal(anthropic.selected, 'claude-sonnet-4-6'); // API default = configured model
+  // Save a selection.
+  const saved = (await app.inject({ method: 'POST', url: '/api/engines/anthropic/model', headers: auth(), payload: { model: 'claude-opus-4-8' } })).json();
+  assert.equal(saved.selected, 'claude-opus-4-8');
+  engines = (await app.inject({ method: 'GET', url: '/api/engines', headers: auth() })).json().engines;
+  assert.equal(engines.find((e) => e.id === 'anthropic').selected, 'claude-opus-4-8');
+});
+
+test('task model: body wins; empty = default(null); absent falls back to saved selection', async () => {
+  const { app, db } = makeApp();
+  await app.inject({ method: 'POST', url: '/api/engines/claude/model', headers: auth(), payload: { model: 'sonnet' } });
+  const explicit = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'a', engine: 'claude', model: 'opus' } })).json();
+  assert.equal(explicit.model, 'opus');
+  const def = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'b', engine: 'claude', model: '' } })).json();
+  assert.equal(def.model, null); // explicit empty = engine default
+  const inherited = (await app.inject({ method: 'POST', url: '/api/tasks', headers: auth(), payload: { prompt: 'c', engine: 'claude' } })).json();
+  assert.equal(inherited.model, 'sonnet'); // no model field → saved selection
+  const rerun = (await app.inject({ method: 'POST', url: `/api/tasks/${explicit.id}/rerun`, headers: auth() })).json();
+  assert.equal(getTask(db, rerun.id).model, 'opus'); // rerun preserves model
+});
+
 test('streaming task appends incremental output via onData', async () => {
   const db = openDb(':memory:');
   let clock = 0;

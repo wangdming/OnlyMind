@@ -297,10 +297,54 @@ async function loadEngines() {
     if (state.enginePref && state.engineById[state.enginePref]) $('engine').value = state.enginePref;
     refreshEngineKeyUI();
     refreshKeyStatus();
+    renderModelOptions();
   } catch { /* surfaced elsewhere */ }
 }
 
 function selectedEngine() { return state.engineById[$('engine').value]; }
+
+// Populate the model dropdown for the current engine and select its saved model.
+// A model not in the catalog (custom) selects "自定义" and fills the text box.
+function renderModelOptions() {
+  const e = selectedEngine();
+  const sel = $('model');
+  if (!e) { sel.innerHTML = ''; $('modelCustom').classList.add('hidden'); return; }
+  const catalog = e.models || [];
+  const opts = catalog.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`);
+  if (e.allowCustom) opts.push('<option value="__custom__">自定义…</option>');
+  sel.innerHTML = opts.join('');
+  const cur = e.selected ?? '';
+  if (catalog.some((m) => m.id === cur)) {
+    sel.value = cur;
+    $('modelCustom').classList.add('hidden');
+    $('modelCustom').value = '';
+  } else if (e.allowCustom) {
+    sel.value = '__custom__';
+    $('modelCustom').classList.remove('hidden');
+    $('modelCustom').value = cur;
+  } else {
+    sel.value = catalog[0]?.id ?? '';
+    $('modelCustom').classList.add('hidden');
+  }
+}
+
+// The model string currently chosen in the UI ('' = engine default).
+function chosenModel() {
+  const v = $('model').value;
+  return v === '__custom__' ? $('modelCustom').value.trim() : v;
+}
+
+// Persist the chosen model as this engine's default (sticky across reloads).
+async function saveModel() {
+  const engine = $('engine').value;
+  const e = state.engineById[engine];
+  if (!e) return;
+  const model = chosenModel();
+  try {
+    const r = await api(`/api/engines/${engine}/model`, { method: 'POST', body: JSON.stringify({ model }) });
+    e.selected = r.selected;
+  } catch { /* non-fatal */ }
+}
 
 // Show the inline "enter API key" row when the chosen engine needs a key but
 // none is set yet.
@@ -567,11 +611,18 @@ $('engine').addEventListener('change', async () => {
   state.enginePref = $('engine').value;
   localStorage.setItem('onlymind_engine', state.enginePref);
   refreshEngineKeyUI();
+  renderModelOptions();
   // Sessions are per-engine: reset selection and reload for the new engine.
   state.currentSession = '';
   await loadSessions();
   await loadMore(true);
 });
+
+$('model').addEventListener('change', () => {
+  $('modelCustom').classList.toggle('hidden', $('model').value !== '__custom__');
+  saveModel();
+});
+$('modelCustom').addEventListener('change', saveModel);
 
 $('session').addEventListener('change', onSessionChange);
 $('sessRename').addEventListener('click', renameSession);
@@ -622,6 +673,7 @@ $('submit').addEventListener('click', async () => {
       body: JSON.stringify({
         prompt,
         engine: $('engine').value,
+        model: chosenModel(),
         cwd: $('cwd').value.trim() || undefined,
         stream: state.streamPref,
         concise: state.concisePref,

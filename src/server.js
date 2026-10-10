@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { randomUUID } from 'node:crypto';
 import {
-  insertTask, getTask, listTasks, setSetting,
+  insertTask, getTask, listTasks, setSetting, getSetting,
   createSession, getSession, listSessions, renameSession, deleteSession, touchSession,
   setSessionCwd, countSessionTasks,
   sessionHistory, setSessionSummary, setSyncIgnored,
@@ -83,7 +83,31 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     };
   });
 
-  app.get('/api/engines', async () => ({ engines: engineList((p) => !!getApiKey(p)) }));
+  // The engine's default model when the user hasn't picked one: API engines use
+  // the configured model; CLI engines use their own default (empty = no flag).
+  const engineDefaultModel = (id) => {
+    if (id === 'openai') return models.openai || '';
+    if (id === 'anthropic') return models.anthropic || '';
+    return '';
+  };
+  // The model to run for an engine: the user's saved selection, else the default.
+  const selectedModel = (id) => {
+    const s = getSetting(db, `model_${id}`);
+    return (s === null || s === undefined) ? engineDefaultModel(id) : s;
+  };
+
+  app.get('/api/engines', async () => ({
+    engines: engineList((p) => !!getApiKey(p)).map((e) => ({ ...e, selected: selectedModel(e.id) })),
+  }));
+
+  // Save the selected model for an engine (empty string = restore its default).
+  app.post('/api/engines/:engine/model', async (req, reply) => {
+    const engine = req.params.engine;
+    if (!isValidEngine(engine)) return reply.code(400).send({ error: `unknown engine: ${engine}` });
+    const model = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+    setSetting(db, `model_${engine}`, model);
+    return { ok: true, engine, selected: selectedModel(engine) };
+  });
 
   // Which providers already have a key stored (never returns the key itself).
   app.get('/api/keys', async () => ({
@@ -153,6 +177,10 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
 
     const sessionId = typeof body.session_id === 'string' && body.session_id ? body.session_id : null;
     const mcp = body.mcp === true || body.mcp === 1 || body.mcp === '1';
+    // Model: explicit body.model wins (even ''), else the engine's saved
+    // selection; an empty value means "engine default" → stored as null.
+    let model = Object.prototype.hasOwnProperty.call(body, 'model') ? body.model : getSetting(db, `model_${engine}`);
+    model = (typeof model === 'string' && model.trim()) ? model.trim() : null;
 
     if (!prompt) return reply.code(400).send({ error: 'prompt is required' });
     if (!isValidEngine(engine)) return reply.code(400).send({ error: `unknown engine: ${engine}` });
@@ -178,7 +206,7 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
       }
     }
 
-    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd: effectiveCwd, stream, concise, session_id: sessionId, mcp, created_at: now() });
+    const task = insertTask(db, { id: randomUUID(), prompt, engine, cwd: effectiveCwd, stream, concise, session_id: sessionId, mcp, model, created_at: now() });
     if (sessionId) touchSession(db, sessionId, now());
     queue.enqueue(task.id);
     return reply.code(201).send(task);
@@ -268,7 +296,7 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     const transcript = all.map((t) => `【我】${t.prompt}\n【你】${t.output ?? ''}`).join('\n\n');
     const base = s.summary ? `已有摘要:\n${s.summary}\n\n新的对话:\n` : '';
     const prompt = `请把下面的多轮对话压缩成简洁的中文要点摘要,保留关键事实、结论、决定与未决问题,供后续对话作为上下文。只输出摘要正文,不要多余说明。\n\n${base}${transcript}`;
-    const model = eng.provider === 'openai' ? models.openai : models.anthropic;
+    const model = selectedModel(s.engine) || (eng.provider === 'openai' ? models.openai : models.anthropic);
     const result = await complete(eng.provider, { prompt, key, concise: false, stream: false, model, maxTokens: models.anthropicMaxTokens });
     if (result.status !== 'done' || !result.output) {
       return reply.code(502).send({ error: result.error || '压缩失败' });
@@ -294,7 +322,7 @@ export function buildServer({ db, queue, token, publicDir, version = '0.0.0', re
     if (!src) return reply.code(404).send({ error: 'not found' });
     const task = insertTask(db, {
       id: randomUUID(), prompt: src.prompt, engine: src.engine, cwd: src.cwd,
-      stream: src.stream, concise: src.concise, session_id: src.session_id, mcp: src.mcp, created_at: now(),
+      stream: src.stream, concise: src.concise, session_id: src.session_id, mcp: src.mcp, model: src.model, created_at: now(),
     });
     if (src.session_id) touchSession(db, src.session_id, now());
     queue.enqueue(task.id);

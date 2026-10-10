@@ -29,8 +29,9 @@ export const ENGINES = {
     stdinText(task) {
       return (task && task.concise ? CONCISE_INSTRUCTION + '\n\n' : '') + task.prompt;
     },
-    build() {
-      return ['-p', '--output-format', 'json', '--dangerously-skip-permissions'];
+    build(task) {
+      const m = task && task.model ? ['--model', task.model] : [];
+      return ['-p', '--output-format', 'json', '--dangerously-skip-permissions', ...m];
     },
     // Claude with --output-format json prints a JSON envelope; the human-facing
     // answer is in `.result`. Fall back to raw stdout if parsing fails.
@@ -44,8 +45,9 @@ export const ENGINES = {
       return stdout;
     },
     stream: {
-      build() {
-        return ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'];
+      build(task) {
+        const m = task && task.model ? ['--model', task.model] : [];
+        return ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', ...m];
       },
       // Parse one JSONL line from stream-json.
       // Returns { delta?: string, final?: string }.
@@ -89,8 +91,9 @@ export const ENGINES = {
     // id); later turns `exec resume <id>` so codex keeps its own context.
     // --skip-git-repo-check lets codex run outside a git repo.
     build(task, opts = {}) {
+      const m = task && task.model ? ['-m', task.model] : [];
       const base = ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-'];
-      return opts.resumeId ? ['exec', 'resume', opts.resumeId, ...base] : ['exec', ...base];
+      return opts.resumeId ? ['exec', 'resume', opts.resumeId, ...m, ...base] : ['exec', ...m, ...base];
     },
     parse(stdout) {
       return stdout;
@@ -98,8 +101,9 @@ export const ENGINES = {
     stream: {
       // codex exec already streams human-readable output to stdout.
       build(task, opts = {}) {
+        const m = task && task.model ? ['-m', task.model] : [];
         const base = ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-'];
-        return opts.resumeId ? ['exec', 'resume', opts.resumeId, ...base] : ['exec', ...base];
+        return opts.resumeId ? ['exec', 'resume', opts.resumeId, ...m, ...base] : ['exec', ...m, ...base];
       },
       line(raw) {
         return { delta: raw };
@@ -126,6 +130,34 @@ export function isValidEngine(engine) {
   return Object.prototype.hasOwnProperty.call(ENGINES, engine);
 }
 
+// Selectable model catalogs per engine. id '' = the engine's own default:
+// CLI engines send no --model/-m flag; API engines fall back to the configured
+// default model. Each engine also allows a free-text custom model. All ids are
+// ASCII (safe as argv under Windows shell:true).
+export const ENGINE_MODELS = {
+  claude: [
+    { id: '', label: '默认(CLI 自带)' },
+    { id: 'opus', label: 'opus(最强)' },
+    { id: 'sonnet', label: 'sonnet(均衡)' },
+    { id: 'haiku', label: 'haiku(快·省)' },
+  ],
+  codex: [
+    { id: '', label: '默认(CLI 自带)' },
+  ],
+  openai: [
+    { id: 'gpt-4o', label: 'gpt-4o' },
+    { id: 'gpt-4o-mini', label: 'gpt-4o-mini(快·省)' },
+    { id: 'o3', label: 'o3(推理)' },
+  ],
+  anthropic: [
+    { id: 'claude-opus-4-8', label: 'opus-4-8(最强·推荐)' },
+    { id: 'claude-sonnet-4-6', label: 'sonnet-4-6(均衡)' },
+    { id: 'claude-haiku-4-5', label: 'haiku-4-5(快·省)' },
+    { id: 'claude-opus-4-7', label: 'opus-4-7' },
+    { id: 'claude-fable-5', label: 'fable-5(最强·需30天留存)' },
+  ],
+};
+
 // Full metadata for the client. keySet(provider) tells whether a key is stored.
 export function engineList(keySet = () => false) {
   return Object.entries(ENGINES).map(([id, e]) => ({
@@ -135,5 +167,7 @@ export function engineList(keySet = () => false) {
     needsKey: !!e.needsKey,
     provider: e.provider || null,
     keySet: e.needsKey ? !!keySet(e.provider) : true,
+    models: ENGINE_MODELS[id] || [],
+    allowCustom: true,
   }));
 }

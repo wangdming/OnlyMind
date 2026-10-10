@@ -1,6 +1,6 @@
 {
   "name": "onlymind",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Send tasks from your phone to Claude Code / Codex running on your computer, execute them, and browse history.",
   "type": "module",
   "main": "src/index.js",

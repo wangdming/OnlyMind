@@ -90,7 +90,7 @@ export function spawnRunner({ defaultCwd, taskTimeoutMs, getApiKey = () => null,
       if (!key) {
         return Promise.resolve({ status: 'failed', output: null, error: `未设置 ${engine.provider} API Key,请在手机「设置」中填写并验证`, exitCode: null });
       }
-      const model = engine.provider === 'openai' ? models.openai : models.anthropic;
+      const model = task.model || (engine.provider === 'openai' ? models.openai : models.anthropic);
       return complete(engine.provider, {
         prompt: task.prompt, key, concise: !!task.concise, stream: !!task.stream,
         model, maxTokens: models.anthropicMaxTokens, onData, signal,
